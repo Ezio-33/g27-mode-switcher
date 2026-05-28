@@ -1,0 +1,12 @@
+# Configuration Cargo du projet.
+#
+# Cross-compilation vers Windows (cible `x86_64-pc-windows-gnu`) depuis
+# Linux / WSL2. Prérequis côté système :
+#   - paquet `mingw-w64` installé (fournit `x86_64-w64-mingw32-gcc`) ;
+#   - cible Rust ajoutée : `rustup target add x86_64-pc-windows-gnu`.
+#
+# La compilation native Linux n'est pas affectée : aucune cible par défaut
+# n'est forcée, le build cible l'hôte sauf si `--target` est précisé.
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-ar"
