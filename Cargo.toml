@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.102"
+clap = { version = "4.6.1", features = ["derive"] }
+rusb = "0.9.4"
+thiserror = "2.0.18"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 # Lints stricts : tout warning Clippy doit être traité (la CI lance
 # `cargo clippy ... -- -D warnings`). `unsafe_code` est signalé pour forcer
