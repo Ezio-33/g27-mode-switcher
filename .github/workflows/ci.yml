@@ -18,7 +18,7 @@ jobs:
     name: Lint, tests et build Linux
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # libusb système requise par le build Linux natif (rusb non vendored).
       - name: Installer les dépendances système
@@ -46,7 +46,7 @@ jobs:
     name: Cross-compile Windows (.exe)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Installer mingw-w64
         run: sudo apt-get update && sudo apt-get install -y mingw-w64
@@ -59,7 +59,7 @@ jobs:
         run: cargo build --locked --release --target x86_64-pc-windows-gnu
 
       - name: Publier l'exécutable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: g27-mode-switcher-windows
           path: target/x86_64-pc-windows-gnu/release/g27-mode-switcher.exe
