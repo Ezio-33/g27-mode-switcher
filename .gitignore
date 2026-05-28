@@ -12,3 +12,6 @@
 # --- Environnements / éditeurs ---
 .python-version
 *.log
+
+# --- Notes de session (hors repo) ---
+/PROMPT_INITIAL.md
