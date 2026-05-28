@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Annule un run précédent encore en cours sur la même référence.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Lint, tests et build Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # libusb système requise par le build Linux natif (rusb non vendored).
+      - name: Installer les dépendances système
+        run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev pkg-config
+
+      # Le toolchain 1.95.0 + clippy/rustfmt + cible Windows sont installés
+      # automatiquement par rustup via rust-toolchain.toml.
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Vérifier le formatage
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (strict)
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      # Sans la feature hardware-tests : pas de G27 disponible en CI.
+      - name: Tests
+        run: cargo test --locked
+
+      - name: Build Linux
+        run: cargo build --locked
+
+  cross-windows:
+    name: Cross-compile Windows (.exe)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer mingw-w64
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # libusb est lié statiquement (feature vendored) → .exe autonome.
+      - name: Build release Windows
+        run: cargo build --locked --release --target x86_64-pc-windows-gnu
+
+      - name: Publier l'exécutable
+        uses: actions/upload-artifact@v4
+        with:
+          name: g27-mode-switcher-windows
+          path: target/x86_64-pc-windows-gnu/release/g27-mode-switcher.exe
+          if-no-files-found: error
