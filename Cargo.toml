@@ -16,6 +16,12 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # Lancement : `cargo test --features hardware-tests`. Voir tests/README.md.
 hardware-tests = []
 
+# Cible Windows : on lie libusb statiquement (feature `vendored`) pour garantir
+# un .exe autonome, sans `libusb-1.0.dll` à fournir. Le build Linux natif
+# continue d'utiliser la libusb système (paquet `libusb-1.0-0-dev`).
+[target.'cfg(windows)'.dependencies]
+rusb = { version = "0.9.4", features = ["vendored"] }
+
 # Lints stricts : tout warning Clippy doit être traité (la CI lance
 # `cargo clippy ... -- -D warnings`). `unsafe_code` est signalé pour forcer
 # un `#[allow(unsafe_code)]` explicite + commentaire `// SAFETY:` au cas où
