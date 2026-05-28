@@ -11,6 +11,11 @@ thiserror = "2.0.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
+[features]
+# Tests d'intégration nécessitant un G27 réellement branché (opt-in).
+# Lancement : `cargo test --features hardware-tests`. Voir tests/README.md.
+hardware-tests = []
+
 # Lints stricts : tout warning Clippy doit être traité (la CI lance
 # `cargo clippy ... -- -D warnings`). `unsafe_code` est signalé pour forcer
 # un `#[allow(unsafe_code)]` explicite + commentaire `// SAFETY:` au cas où
