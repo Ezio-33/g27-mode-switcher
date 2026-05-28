@@ -4,3 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+
+# Lints stricts : tout warning Clippy doit être traité (la CI lance
+# `cargo clippy ... -- -D warnings`). `unsafe_code` est signalé pour forcer
+# un `#[allow(unsafe_code)]` explicite + commentaire `// SAFETY:` au cas où
+# un appel libusb bas niveau le rendrait strictement nécessaire.
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

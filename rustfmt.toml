@@ -1,0 +1,8 @@
+# Style de formatage du projet.
+# Uniquement des options stables : aucune option « nightly » ici, pour ne
+# pas générer de warning avec la toolchain stable pinnée.
+edition = "2024"
+max_width = 100
+newline_style = "Unix"
+use_field_init_shorthand = true
+use_try_shorthand = true
