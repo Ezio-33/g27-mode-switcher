@@ -1,0 +1,8 @@
+# Toolchain Rust épinglée pour des builds reproductibles (dev + CI).
+# `rustup` installe automatiquement cette version, ses composants et la
+# cible Windows au premier appel `cargo` (nécessite un accès réseau).
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+targets = ["x86_64-pc-windows-gnu"]
+profile = "minimal"
