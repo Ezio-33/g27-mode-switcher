@@ -1,0 +1,6 @@
+# Seuils Clippy stricts : on garde des fonctions et des types simples.
+# Les lints concernés sont activés via le bloc [lints] de Cargo.toml.
+cognitive-complexity-threshold = 15
+too-many-arguments-threshold = 6
+too-many-lines-threshold = 80
+type-complexity-threshold = 250
