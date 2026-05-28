@@ -6,9 +6,26 @@ Bascule un volant **Logitech G27** de son mode dégradé par défaut vers son
 propriétaire** — donc **compatible avec HVCI / Memory Integrity** activé sur
 Windows 11.
 
-> **État du projet : en cours de développement.** L'amorçage (étape 1) est
-> terminé. La détection USB, la CLI et la bascule effective arrivent dans les
-> étapes suivantes (voir [Feuille de route](#feuille-de-route)).
+> **État : fonctionnel, en préparation de la première version `v0.1.0`.**
+> La détection USB, la CLI (`list` / `switch` / `status`) et la bascule sont
+> opérationnelles. Testé sur un parc matériel limité — les retours sont
+> bienvenus.
+
+## Sommaire
+
+- [Objectif](#objectif)
+- [Contexte](#contexte)
+- [Comment ça marche (techniquement)](#comment-ça-marche-techniquement)
+- [Prérequis](#prérequis)
+- [Démarrage rapide](#démarrage-rapide)
+- [Installation de l'outil](#installation-de-loutil)
+- [Installation du pilote WinUSB (Zadig)](#installation-du-pilote-winusb-zadig)
+- [Utilisation](#utilisation)
+- [Dépannage](#dépannage)
+- [Limitations](#limitations)
+- [Feuille de route](#feuille-de-route)
+- [Références](#références)
+- [Licence](#licence)
 
 ## Objectif
 
@@ -68,27 +85,37 @@ qui contrarie HVCI**.
 - **Windows 11** (l'outil cible cette plateforme ; HVCI peut rester activé).
 - Un **volant Logitech G27** branché en USB.
 - Le pilote **WinUSB** posé **uniquement sur l'interface du G27**, via
-  l'utilitaire **[Zadig](https://zadig.akeo.ie/)**. WinUSB est un pilote
-  Microsoft signé : il permet à un programme user-mode de dialoguer en USB brut
-  sans pilote propriétaire. (Procédure détaillée à venir dans la documentation
-  utilisateur.)
+  l'utilitaire **[Zadig](https://zadig.akeo.ie/)** — voir
+  [la procédure détaillée](#installation-du-pilote-winusb-zadig). WinUSB est un
+  pilote Microsoft signé qui permet à un programme user-mode de dialoguer en USB
+  brut, sans pilote propriétaire.
 
 > ⚠️ Avec Zadig, ne remplacez le pilote **que** pour le périphérique G27.
 > Modifier le pilote d'un autre périphérique (clavier, souris, hub…) peut le
 > rendre inutilisable.
 
-## Installation
+## Démarrage rapide
 
-### Option A — binaire pré-compilé (à venir)
+1. Récupérez `g27-mode-switcher.exe` (voir [Installation](#installation-de-loutil)).
+2. Posez le pilote **WinUSB** sur le G27 avec **Zadig** (une seule fois — voir
+   [la procédure](#installation-du-pilote-winusb-zadig)).
+3. Vérifiez l'état : `g27-mode-switcher status`.
+4. Basculez : `g27-mode-switcher switch`. Le volant se reconnecte en mode natif.
 
-Une fois la première version publiée, téléchargez `g27-mode-switcher.exe` depuis
-la page **Releases** du dépôt et placez-le où vous voulez. Aucune installation
-n'est requise.
+## Installation de l'outil
+
+### Option A — binaire pré-compilé
+
+- **Releases** (à partir de la `v0.1.0`) : téléchargez `g27-mode-switcher.exe`
+  depuis la page **Releases** du dépôt et placez-le où vous voulez. Aucune
+  installation n'est requise.
+- **Artifacts de CI** : chaque exécution de l'intégration continue publie aussi
+  l'`.exe` en *artifact* téléchargeable depuis l'onglet **Actions** du dépôt.
 
 ### Option B — compilation depuis les sources
 
-Prérequis de build : [Rust](https://rustup.rs/) stable (la version est épinglée
-par `rust-toolchain.toml`).
+Prérequis de build : [Rust](https://rustup.rs/) (la version est épinglée par
+`rust-toolchain.toml`, installée automatiquement par `rustup`).
 
 ```bash
 # Build natif (plateforme courante)
@@ -100,28 +127,100 @@ cargo build --release --target x86_64-pc-windows-gnu
 # Binaire : target/x86_64-pc-windows-gnu/release/g27-mode-switcher.exe
 ```
 
+## Installation du pilote WinUSB (Zadig)
+
+Cette étape **manuelle et unique** autorise l'outil à parler au G27 en USB brut.
+Elle s'effectue une seule fois par machine (Windows mémorise ensuite le pilote
+pour ce périphérique).
+
+> ℹ️ **Droits administrateur** : seul **Zadig** en a besoin (il remplace un
+> pilote). L'outil `g27-mode-switcher`, lui, fonctionne en **user-mode**, sans
+> privilèges élevés.
+
+1. **Branchez le G27.** Au démarrage il est en mode compatibilité, donc visible
+   sous l'USB ID `046D:C294`.
+2. **Téléchargez Zadig** depuis <https://zadig.akeo.ie/> (exécutable portable,
+   aucune installation).
+3. **Lancez Zadig** en tant qu'administrateur (clic droit → *Exécuter en tant
+   qu'administrateur*).
+4. Menu **`Options` → cochez `List All Devices`**.
+5. Dans la **liste déroulante**, sélectionnez l'entrée du G27. Pour être sûr de
+   la bonne : son **USB ID doit être `046D C294`** (affiché par Zadig). Si
+   plusieurs interfaces apparaissent, choisissez **`(Interface 0)`**.
+6. À droite de la flèche, vérifiez que le pilote cible est **`WinUSB`**.
+7. Cliquez sur **`Replace Driver`** (ou `Install Driver`) et confirmez.
+8. Attendez le message de réussite, puis **débranchez/rebranchez** le volant.
+
+> 📷 *Captures à ajouter ici :* (a) `Options → List All Devices` coché ;
+> (b) le G27 `046D:C294` sélectionné avec la cible `WinUSB` ; (c) l'écran de
+> confirmation après `Replace Driver`.
+
+> 🔁 Après une bascule réussie, le volant repasse sous `046D:C29B`. C'est
+> Windows qui gère alors ce nouvel ID avec son pilote HID natif — **rien à
+> refaire dans Zadig**. Le pilote WinUSB reste associé au mode compat `046D:C294`
+> pour les prochaines bascules.
+
 ## Utilisation
 
-> Interface CLI **prévue** (non encore implémentée — voir l'état du projet).
+La CLI est implémentée (sous-commandes `list` / `switch` / `status`). L'outil
+fonctionne en **user-mode** : aucun droit administrateur n'est requis.
 
 ```bash
-# Lister les périphériques Logitech détectés
-g27-mode-switcher list
+# Aide générale et version
+g27-mode-switcher --help
+g27-mode-switcher --version
 
-# Afficher l'état (mode courant) du volant
+# Afficher le mode courant du G27
 g27-mode-switcher status
 
-# Basculer le volant en mode natif G27
+# Lister tous les périphériques Logitech détectés
+g27-mode-switcher list
+
+# Basculer le volant en mode natif
 g27-mode-switcher switch
 
-# Simuler sans rien envoyer au matériel
+# Simuler la bascule sans rien envoyer au matériel
 g27-mode-switcher switch --dry-run
 
-# Logs détaillés
-g27-mode-switcher switch --verbose
+# Logs détaillés (-v : debug, -vv : trace)
+g27-mode-switcher -v switch
 ```
 
-L'outil fonctionne en **user-mode** : aucun droit administrateur n'est requis.
+La verbosité est aussi pilotable via la variable d'environnement `RUST_LOG`
+(par ex. `RUST_LOG=debug`), prioritaire sur `-v`.
+
+## Dépannage
+
+**« Aucun G27 détecté » alors que le volant est branché.**
+- Vérifiez le câble et le port USB.
+- Assurez-vous d'avoir posé **WinUSB** sur le bon périphérique
+  ([procédure Zadig](#installation-du-pilote-winusb-zadig)) — sans cela, le
+  périphérique n'est pas accessible en USB brut.
+- Confirmez qu'il s'agit bien d'un **G27** (`g27-mode-switcher list` affiche les
+  VID/PID).
+
+**La bascule échoue avec une erreur d'accès USB.**
+- Le pilote WinUSB n'est probablement pas (ou plus) associé à l'interface du
+  G27 : relancez Zadig sur l'entrée `046D:C294`, **`(Interface 0)`**.
+- Un autre logiciel utilise peut-être le volant (jeu, LGS résiduel) : fermez-le
+  puis réessayez.
+
+**Le volant est revenu en mode compatibilité après un redémarrage / rebranchement.**
+- C'est attendu : la bascule **n'est pas persistante**. Relancez simplement
+  `g27-mode-switcher switch`. Vous pouvez automatiser ce lancement au démarrage
+  de Windows (raccourci dans le dossier *Démarrage*, ou tâche planifiée).
+
+**« Le G27 est déjà en mode natif : rien à faire. »**
+- Le volant est déjà en `046D:C29B`. Aucune action nécessaire.
+
+**HVCI / Memory Integrity refuse toujours quelque chose.**
+- Cet outil **n'installe aucun pilote noyau**. Si HVCI bloque un composant,
+  c'est qu'un pilote tiers (souvent un reste de **LGS**) est en cause —
+  désinstallez-le. WinUSB, lui, est signé par Microsoft et HVCI-safe.
+
+**Côté développement Linux : erreur de permission USB.**
+- L'énumération fonctionne sans privilèges, mais l'ouverture du périphérique
+  peut nécessiter une règle `udev` adaptée ou une exécution privilégiée.
 
 ## Limitations
 
@@ -136,14 +235,14 @@ L'outil fonctionne en **user-mode** : aucun droit administrateur n'est requis.
 ## Feuille de route
 
 1. ✅ Amorçage du projet (outillage, licence, configuration).
-2. ⏳ Module `usb` : détection des périphériques Logitech, parsing VID/PID.
-3. ⏳ Module `switcher` : construction et envoi du magic packet.
-4. ⏳ CLI `clap` : sous-commandes `list` / `switch` / `status`.
-5. ⏳ Tests unitaires.
-6. ⏳ Cross-compilation Windows validée.
-7. ⏳ Intégration continue (GitHub Actions).
-8. ⏳ Documentation utilisateur (procédure Zadig détaillée, dépannage).
-9. ⏳ Première version `v0.1.0`.
+2. ✅ Module `usb` : détection des périphériques Logitech, parsing VID/PID.
+3. ✅ Module `switcher` : construction et envoi du magic packet.
+4. ✅ CLI `clap` : sous-commandes `list` / `switch` / `status`.
+5. ✅ Tests unitaires (+ tests matériels opt-in via la feature `hardware-tests`).
+6. ✅ Cross-compilation Windows validée (`.exe` autonome, libusb statique).
+7. ✅ Intégration continue (GitHub Actions).
+8. ✅ Documentation utilisateur (procédure Zadig détaillée, dépannage).
+9. ⏳ Première version `v0.1.0` et release GitHub.
 
 ## Références
 
