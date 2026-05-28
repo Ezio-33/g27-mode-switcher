@@ -1,0 +1,14 @@
+# --- Rust / Cargo ---
+/target/
+# Cargo.lock est volontairement versionné (projet binaire).
+
+# --- Artefacts de release cross-compilés ---
+/dist/
+
+# --- Configuration locale (spécifique machine, ne pas committer) ---
+.cargo/config.local.toml
+.claude/settings.local.json
+
+# --- Environnements / éditeurs ---
+.python-version
+*.log
