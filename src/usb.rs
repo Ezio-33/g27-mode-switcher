@@ -177,4 +177,30 @@ mod tests {
         assert!(rendered.contains("0xc29b"), "rendu: {rendered}");
         assert!(rendered.contains("natif"), "rendu: {rendered}");
     }
+
+    #[test]
+    fn display_labels_compatibility_and_other() {
+        assert!(
+            device(G27_COMPAT_PRODUCT_ID)
+                .to_string()
+                .contains("compatibilité")
+        );
+        assert!(device(0x1234).to_string().contains("périphérique Logitech"));
+    }
+}
+
+/// Tests d'intégration nécessitant un G27 réellement branché.
+/// Activés via la feature `hardware-tests` (voir tests/README.md).
+#[cfg(all(test, feature = "hardware-tests"))]
+mod hardware_tests {
+    use super::{DeviceInfo, list_logitech_devices};
+
+    #[test]
+    fn detects_a_connected_g27() {
+        let devices = list_logitech_devices().expect("énumération USB impossible");
+        assert!(
+            devices.iter().any(DeviceInfo::is_g27),
+            "aucun G27 détecté — le volant est-il branché et accessible (WinUSB) ?"
+        );
+    }
 }
