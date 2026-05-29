@@ -65,19 +65,26 @@ Le volant expose deux identités USB selon son mode :
 | Compatibilité (défaut) | `0x046D` | `0xC294` | 200°, FFB bridé |
 | Natif G27 (cible) | `0x046D` | `0xC29B` | 900°, pédales séparées, FFB complet |
 
-La bascule consiste à envoyer un **« magic packet »** : un **HID output report**
-(report ID 3). Côté USB bas niveau, il correspond à la requête `SET_REPORT` de la
-classe HID. Le format est repris, **à titre de référence documentaire
-uniquement**, du pilote Linux `drivers/hid/hid-lg4ff.c` (aucune ligne de code
+La bascule consiste à envoyer une **séquence de deux « magic packets »** : deux
+**HID output reports non numérotés** de 7 octets. Le format est repris, **à titre
+de référence documentaire uniquement**, du pilote Linux
+`drivers/hid/hid-lg4ff.c` (`lg4ff_mode_switch_ext09_g27`, aucune ligne de code
 n'est copiée — voir [Références](#références)) :
 
 ```
-report ID = 0x03
-payload   = [0xF8, 0x09, 0x05, 0x01, 0x01, 0x00, 0x00]
+# Commande 1 — revert mode upon USB reset
+[0xF8, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00]
+# Commande 2 — switch to G27 with detach
+[0xF8, 0x09, 0x04, 0x01, 0x00, 0x00, 0x00]
 
-# Buffer effectivement écrit (report ID en tête) :
-# [0x03, 0xF8, 0x09, 0x05, 0x01, 0x01, 0x00, 0x00]
+# Ces commandes n'ont pas de report ID : pour hidapi, le buffer est préfixé de
+# 0x00 (octet « pas de report ID », non transmis). Ex. pour la commande 2 :
+# [0x00, 0xF8, 0x09, 0x04, 0x01, 0x00, 0x00, 0x00]
 ```
+
+> ⚠️ À ne pas confondre avec le **G29** : sa 2ᵉ commande est
+> `[0xF8, 0x09, 0x05, 0x01, 0x01, 0x00, 0x00]`. Envoyer ce paquet à un G27 ne
+> bascule rien (le firmware l'ignore en silence).
 
 L'outil ouvre le périphérique via l'**API HID native** (`hidraw` sous Linux,
 `HidUsb`/`setupapi` sous Windows) et écrit ce report. **Le pilote HID du système
