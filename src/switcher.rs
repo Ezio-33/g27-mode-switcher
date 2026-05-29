@@ -10,14 +10,19 @@
 
 use crate::hid::{self, LOGITECH_VENDOR_ID};
 
-/// Report ID de l'output report de bascule (octet de poids faible de
-/// `wValue = 0x0203` dans le transfert `SET_REPORT` du noyau Linux).
-/// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c`.
-const MODE_SWITCH_REPORT_ID: u8 = 0x03;
+/// Octet de préfixe hidapi signifiant « pas de report ID numéroté » : hidapi le
+/// retire et ne le transmet PAS sur le fil. Les commandes Logitech de bascule
+/// sont des reports non numérotés de 7 octets.
+/// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c` (les commandes y sont des
+/// blocs de 7 octets, sans report ID préfixé).
+const HID_NO_REPORT_ID: u8 = 0x00;
 
-/// Charge utile du magic packet de bascule de mode (corps du report).
-/// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c`.
-const MODE_SWITCH_PAYLOAD: [u8; 7] = [0xF8, 0x09, 0x05, 0x01, 0x01, 0x00, 0x00];
+/// Longueur d'une commande de bascule (corps du report, hors préfixe).
+const COMMAND_LEN: usize = 7;
+
+/// Charge utile « switch to G27 with detach ».
+/// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c` (`lg4ff_mode_switch_ext09_g27`).
+const MODE_SWITCH_TO_G27: [u8; COMMAND_LEN] = [0xF8, 0x09, 0x04, 0x01, 0x00, 0x00, 0x00];
 
 /// Un HID output report : report ID suivi de sa charge utile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,15 +38,11 @@ impl OutputReport {
     ///
     /// # Errors
     ///
-    /// Renvoie [`Error::InvalidReport`] si le report ID est nul (un report ID
-    /// de 0 signifie « pas de report numéroté » et ne doit pas être préfixé)
-    /// ou si la charge utile est vide.
+    /// Renvoie [`Error::InvalidReport`] si la charge utile ne fait pas
+    /// exactement [`COMMAND_LEN`] octets (format attendu par le firmware).
     pub fn validate(&self) -> Result<(), Error> {
-        if self.report_id == 0 {
-            return Err(Error::InvalidReport("report id must not be zero"));
-        }
-        if self.payload.is_empty() {
-            return Err(Error::InvalidReport("report payload must not be empty"));
+        if self.payload.len() != COMMAND_LEN {
+            return Err(Error::InvalidReport("report payload must be 7 bytes"));
         }
         Ok(())
     }
@@ -60,8 +61,8 @@ impl OutputReport {
 #[must_use]
 pub fn mode_switch_report() -> OutputReport {
     OutputReport {
-        report_id: MODE_SWITCH_REPORT_ID,
-        payload: &MODE_SWITCH_PAYLOAD,
+        report_id: HID_NO_REPORT_ID,
+        payload: &MODE_SWITCH_TO_G27,
     }
 }
 
@@ -178,20 +179,22 @@ mod tests {
     use super::{Error, OutputReport, mode_switch_report};
 
     #[test]
-    fn builds_expected_magic_packet() {
+    fn builds_corrected_g27_packet() {
         let report = mode_switch_report();
-        assert_eq!(report.report_id, 0x03);
+        assert_eq!(report.report_id, 0x00);
+        // Payload G27 (et non G29 : 0x04, pas 0x05/0x01/0x01).
         assert_eq!(
             report.payload,
-            [0xF8u8, 0x09, 0x05, 0x01, 0x01, 0x00, 0x00].as_slice()
+            [0xF8u8, 0x09, 0x04, 0x01, 0x00, 0x00, 0x00].as_slice()
         );
     }
 
     #[test]
-    fn buffer_prefixes_report_id() {
+    fn buffer_has_no_report_id_prefix() {
+        // Préfixe 0x00 (« pas de report ID ») suivi des 7 octets de la commande.
         assert_eq!(
             mode_switch_report().to_buffer(),
-            vec![0x03u8, 0xF8, 0x09, 0x05, 0x01, 0x01, 0x00, 0x00]
+            vec![0x00u8, 0xF8, 0x09, 0x04, 0x01, 0x00, 0x00, 0x00]
         );
     }
 
@@ -201,16 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_zero_report_id() {
-        let report = OutputReport {
-            report_id: 0x00,
-            ..mode_switch_report()
-        };
-        assert!(matches!(report.validate(), Err(Error::InvalidReport(_))));
-    }
-
-    #[test]
-    fn rejects_empty_payload() {
+    fn rejects_wrong_length() {
         let report = OutputReport {
             payload: &[],
             ..mode_switch_report()
