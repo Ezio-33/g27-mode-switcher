@@ -54,6 +54,12 @@ pub struct DeviceInfo {
     pub product_id: u16,
     /// Numéro d'interface HID (`-1` si non applicable selon la plateforme).
     pub interface_number: i32,
+    /// `Usage Page` de la collection HID de haut niveau (`0` si non renseigné,
+    /// fréquent sous Linux hidraw). Utile pour distinguer plusieurs collections
+    /// d'un même périphérique sous Windows.
+    pub usage_page: u16,
+    /// `Usage` de la collection HID de haut niveau (`0` si non renseigné).
+    pub usage: u16,
     /// Chemin système opaque du périphérique HID, utilisé pour l'ouvrir
     /// précisément (identifiant stable durant la session).
     pub path: CString,
@@ -93,12 +99,14 @@ pub enum Error {
 }
 
 /// Convertit une entrée d'énumération hidapi en [`DeviceInfo`].
-fn device_info_from(entry: &hidapi::DeviceInfo) -> DeviceInfo {
+pub(crate) fn device_info_from(entry: &hidapi::DeviceInfo) -> DeviceInfo {
     let product_id = entry.product_id();
     DeviceInfo {
         vendor_id: entry.vendor_id(),
         product_id,
         interface_number: entry.interface_number(),
+        usage_page: entry.usage_page(),
+        usage: entry.usage(),
         path: entry.path().to_owned(),
         mode: classify_product_id(product_id),
     }
@@ -155,6 +163,8 @@ mod tests {
             vendor_id: LOGITECH_VENDOR_ID,
             product_id,
             interface_number: 0,
+            usage_page: 0x0001,
+            usage: 0x0004,
             path: CString::new("test-path").expect("chemin de test valide"),
             mode: classify_product_id(product_id),
         }
