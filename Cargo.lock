@@ -141,6 +141,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "hidapi",
  "rusb",
  "thiserror",
  "tracing",
@@ -152,6 +153,19 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "hidapi"
+version = "2.6.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c78dadfc12f865bc3fcac3897e64533b930737ceb9ef245c8277de98d0b010e9"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "pkg-config",
+ "windows-sys",
+]
 
 [[package]]
 name = "is_terminal_polyfill"
