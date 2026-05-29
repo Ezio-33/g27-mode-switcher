@@ -17,16 +17,21 @@ sans Zadig), sans dépendance externe à installer côté utilisateur.
 - **Vendor ID** : `0x046D` (Logitech)
 - **Product ID au démarrage** : `0xC294` (Driving Force EX, mode compat)
 - **Product ID cible après bascule** : `0xC29B` (G27 mode natif)
-- **Magic packet** : un **HID output report** (report ID `0x03`), envoyé via
-  l'API HID native (`HidDevice::write`). Repris du kernel Linux `hid-lg4ff.c`,
-  qui le décrit au niveau USB comme une requête `SET_REPORT` :
-  - `bmRequestType = 0x21` (OUT, Class, Interface)
-  - `bRequest = 0x09` (SET_REPORT)
-  - `wValue = 0x0203` (output report, report ID 3)
-  - `wIndex = 0x0000`
-  - `data = [0xf8, 0x09, 0x05, 0x01, 0x01, 0x00, 0x00]`
-  - Buffer HID effectivement écrit : `[0x03, 0xf8, 0x09, 0x05, 0x01, 0x01,
-    0x00, 0x00]` (report ID en tête).
+- **Magic packet** : la bascule est une **séquence de deux HID output reports
+  non numérotés** de 7 octets, repris du kernel Linux `hid-lg4ff.c`
+  (`lg4ff_mode_switch_ext09_g27`, `cmd_count = 2`) :
+  - Commande 1 — « revert mode upon USB reset » :
+    `[0xf8, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00]`
+  - Commande 2 — « switch to G27 with detach » :
+    `[0xf8, 0x09, 0x04, 0x01, 0x00, 0x00, 0x00]`
+  - ⚠️ **Ne pas confondre avec le G29** (`lg4ff_mode_switch_ext09_g29`), dont la
+    2ᵉ commande est `[0xf8, 0x09, 0x05, 0x01, 0x01, 0x00, 0x00]`. Envoyer ce
+    paquet à un G27 ne bascule rien (firmware silencieux) — c'était le bug d'origine.
+  - **Pas de report ID** : pour hidapi, chaque buffer est préfixé de `0x00`
+    (octet « pas de report ID », retiré et non transmis), p. ex.
+    `[0x00, 0xf8, 0x09, 0x04, 0x01, 0x00, 0x00, 0x00]`.
+  - Au niveau USB, le kernel les émet comme des `SET_REPORT` (classe HID :
+    `bmRequestType = 0x21`, `bRequest = 0x09`).
 - Après l'envoi, le volant simule un reconnect USB et réapparaît avec le PID
   cible. Windows applique alors automatiquement son driver HID-compliant game
   controller natif (sans driver Logitech), HVCI-safe.

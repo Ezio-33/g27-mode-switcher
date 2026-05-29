@@ -1,12 +1,18 @@
-//! Construction et envoi du « magic packet » qui bascule le G27 en mode natif.
+//! Construction et envoi de la séquence de bascule du G27 en mode natif.
 //!
-//! Le packet est un **HID output report** (report ID 3). Côté USB bas niveau,
-//! il correspond à la requête `SET_REPORT` documentée dans le pilote Linux
-//! `drivers/hid/hid-lg4ff.c` (`bmRequestType = 0x21`, `bRequest = 0x09`,
-//! `wValue = 0x0203`) — repris à titre de **référence documentaire**, aucune
-//! ligne de code n'est copiée. En passant par l'API HID native (`hidapi`),
-//! l'envoi se fait via `HidDevice::write`, sans déposséder le pilote HID du
-//! système (donc sans Zadig/WinUSB).
+//! La bascule consiste en **deux HID output reports non numérotés** de 7 octets,
+//! repris — à titre de **référence documentaire**, aucune ligne de code n'est
+//! copiée — du pilote Linux `drivers/hid/hid-lg4ff.c`
+//! (`lg4ff_mode_switch_ext09_g27`, `cmd_count = 2`) : « revert mode upon USB
+//! reset » puis « switch to G27 with detach ». Attention à ne pas confondre avec
+//! le G29 (`lg4ff_mode_switch_ext09_g29`), dont la 2ᵉ commande diffère
+//! (`0x05, 0x01, 0x01` au lieu de `0x04, 0x01, 0x00`).
+//!
+//! Côté USB bas niveau, le noyau émet ces commandes comme des requêtes
+//! `SET_REPORT` (classe HID). L'envoi passe ici par l'API HID native (`hidapi`)
+//! via `HidDevice::write`, sans déposséder le pilote HID du système (donc sans
+//! Zadig/WinUSB). Les commandes n'ayant pas de report ID, le buffer est préfixé
+//! de `0x00` (octet « pas de report ID », non transmis).
 
 use std::time::Duration;
 
