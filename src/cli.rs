@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use clap::{ArgAction, Parser, Subcommand};
 
-use crate::{switcher, usb};
+use crate::{hid, switcher};
 
 /// Bascule un volant Logitech G27 vers son mode natif, sans pilote propriétaire.
 #[derive(Debug, Parser)]
@@ -47,7 +47,7 @@ impl Cli {
 
 /// Liste les périphériques Logitech détectés.
 fn run_list() -> ExitCode {
-    match usb::list_logitech_devices() {
+    match hid::list_logitech_devices() {
         Ok(devices) if devices.is_empty() => {
             println!("Aucun périphérique Logitech détecté.");
             ExitCode::SUCCESS
@@ -109,22 +109,22 @@ fn run_switch(dry_run: bool) -> ExitCode {
 
 /// Affiche le mode courant du G27 détecté.
 fn run_status() -> ExitCode {
-    match usb::list_logitech_devices() {
+    match hid::list_logitech_devices() {
         Ok(devices) => {
             let mode = devices
                 .iter()
                 .find(|device| device.is_g27())
                 .map(|device| device.mode);
             match mode {
-                Some(usb::G27Mode::Native) => {
+                Some(hid::G27Mode::Native) => {
                     println!("G27 détecté en mode natif (900°, retour de force complet).");
                 }
-                Some(usb::G27Mode::Compatibility) => {
+                Some(hid::G27Mode::Compatibility) => {
                     println!(
                         "G27 détecté en mode compatibilité (200°). Lancez « switch » pour basculer en mode natif."
                     );
                 }
-                Some(usb::G27Mode::Other) | None => {
+                Some(hid::G27Mode::Other) | None => {
                     println!("Aucun G27 détecté.");
                 }
             }

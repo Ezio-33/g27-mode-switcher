@@ -1,9 +1,12 @@
-//! Détection des périphériques Logitech et identification du mode du G27.
+//! Détection des périphériques HID Logitech et identification du mode du G27.
 //!
-//! Ce module se limite à l'énumération et à l'analyse des descripteurs USB
-//! (lecture seule, sans ouverture du périphérique, donc sans privilèges
-//! élevés). La bascule de mode proprement dite relève du module `switcher`.
+//! Ce module énumère les périphériques via l'API HID native (`hidapi`) :
+//! `hidraw` sous Linux, `HidUsb`/`setupapi` sous Windows. Il ne dépossède
+//! jamais le pilote HID du système (contrairement à une approche USB raw type
+//! `WinUSB`) et ne requiert donc ni Zadig ni privilèges élevés. La bascule de
+//! mode proprement dite relève du module `switcher`.
 
+use std::ffi::CString;
 use std::fmt;
 
 /// Vendor ID Logitech.
@@ -42,17 +45,18 @@ pub fn classify_product_id(product_id: u16) -> G27Mode {
     }
 }
 
-/// Informations sur un périphérique Logitech détecté.
+/// Informations sur un périphérique HID Logitech détecté.
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
     /// Vendor ID (toujours [`LOGITECH_VENDOR_ID`] ici).
     pub vendor_id: u16,
     /// Product ID brut tel qu'annoncé par le périphérique.
     pub product_id: u16,
-    /// Numéro de bus USB.
-    pub bus_number: u8,
-    /// Adresse du périphérique sur le bus.
-    pub address: u8,
+    /// Numéro d'interface HID (`-1` si non applicable selon la plateforme).
+    pub interface_number: i32,
+    /// Chemin système opaque du périphérique HID, utilisé pour l'ouvrir
+    /// précisément (identifiant stable durant la session).
+    pub path: CString,
     /// Mode déduit du Product ID.
     pub mode: G27Mode,
 }
@@ -74,58 +78,68 @@ impl fmt::Display for DeviceInfo {
         };
         write!(
             f,
-            "{label} — VID {:#06x} PID {:#06x} (bus {}, adresse {})",
-            self.vendor_id, self.product_id, self.bus_number, self.address
+            "{label} — VID {:#06x} PID {:#06x} (interface {})",
+            self.vendor_id, self.product_id, self.interface_number
         )
     }
 }
 
-/// Erreurs du module USB.
+/// Erreurs du module HID.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Échec d'accès au sous-système USB (initialisation libusb, énumération…).
-    #[error("failed to access the USB subsystem: {0}")]
-    Access(#[from] rusb::Error),
+    /// Échec d'accès au sous-système HID (initialisation hidapi, énumération…).
+    #[error("failed to access the HID subsystem: {0}")]
+    Access(#[from] hidapi::HidError),
 }
 
-/// Énumère les périphériques Logitech actuellement connectés.
+/// Convertit une entrée d'énumération hidapi en [`DeviceInfo`].
+fn device_info_from(entry: &hidapi::DeviceInfo) -> DeviceInfo {
+    let product_id = entry.product_id();
+    DeviceInfo {
+        vendor_id: entry.vendor_id(),
+        product_id,
+        interface_number: entry.interface_number(),
+        path: entry.path().to_owned(),
+        mode: classify_product_id(product_id),
+    }
+}
+
+/// Énumère les périphériques HID Logitech actuellement connectés.
 ///
-/// L'opération lit uniquement les descripteurs ; elle n'ouvre aucun
-/// périphérique et ne requiert donc pas de privilèges élevés.
+/// L'opération lit uniquement les descripteurs d'énumération ; elle n'ouvre
+/// aucun périphérique et ne requiert donc pas de privilèges élevés.
 ///
 /// # Errors
 ///
-/// Renvoie [`Error::Access`] si le sous-système USB ne peut pas être
-/// interrogé (libusb indisponible, énumération impossible, lecture d'un
-/// descripteur en échec).
+/// Renvoie [`Error::Access`] si le sous-système HID ne peut pas être interrogé
+/// (hidapi indisponible, énumération impossible).
 pub fn list_logitech_devices() -> Result<Vec<DeviceInfo>, Error> {
-    let mut devices = Vec::new();
+    let api = hidapi::HidApi::new()?;
+    Ok(collect_logitech_devices(&api))
+}
 
-    for device in rusb::devices()?.iter() {
-        let descriptor = device.device_descriptor()?;
-        if descriptor.vendor_id() != LOGITECH_VENDOR_ID {
+/// Filtre les périphériques Logitech d'une instance hidapi déjà initialisée.
+///
+/// Factorisé pour permettre au module `switcher` de réutiliser la même
+/// instance [`hidapi::HidApi`] que celle servant ensuite à l'ouverture.
+#[must_use]
+pub fn collect_logitech_devices(api: &hidapi::HidApi) -> Vec<DeviceInfo> {
+    let mut devices = Vec::new();
+    for entry in api.device_list() {
+        if entry.vendor_id() != LOGITECH_VENDOR_ID {
             continue;
         }
-
-        let product_id = descriptor.product_id();
-        let info = DeviceInfo {
-            vendor_id: descriptor.vendor_id(),
-            product_id,
-            bus_number: device.bus_number(),
-            address: device.address(),
-            mode: classify_product_id(product_id),
-        };
-
+        let info = device_info_from(entry);
         tracing::debug!(
             mode = ?info.mode,
-            "périphérique Logitech détecté : VID {:#06x}, PID {:#06x}",
+            "périphérique HID Logitech détecté : VID {:#06x}, PID {:#06x}, interface {}",
             info.vendor_id,
-            info.product_id
+            info.product_id,
+            info.interface_number
         );
         devices.push(info);
     }
-
-    Ok(devices)
+    devices
 }
 
 #[cfg(test)]
@@ -134,13 +148,14 @@ mod tests {
         DeviceInfo, G27_COMPAT_PRODUCT_ID, G27_NATIVE_PRODUCT_ID, G27Mode, LOGITECH_VENDOR_ID,
         classify_product_id,
     };
+    use std::ffi::CString;
 
     fn device(product_id: u16) -> DeviceInfo {
         DeviceInfo {
             vendor_id: LOGITECH_VENDOR_ID,
             product_id,
-            bus_number: 1,
-            address: 2,
+            interface_number: 0,
+            path: CString::new("test-path").expect("chemin de test valide"),
             mode: classify_product_id(product_id),
         }
     }
@@ -197,10 +212,10 @@ mod hardware_tests {
 
     #[test]
     fn detects_a_connected_g27() {
-        let devices = list_logitech_devices().expect("énumération USB impossible");
+        let devices = list_logitech_devices().expect("énumération HID impossible");
         assert!(
             devices.iter().any(DeviceInfo::is_g27),
-            "aucun G27 détecté — le volant est-il branché et accessible (WinUSB) ?"
+            "aucun G27 détecté — le volant est-il branché et accessible (HID : règle udev sous Linux) ?"
         );
     }
 }
