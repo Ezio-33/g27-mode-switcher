@@ -112,6 +112,17 @@ qui contrarie HVCI**.
 - **Artifacts de CI** : chaque exécution de l'intégration continue publie aussi
   l'`.exe` en *artifact* téléchargeable depuis l'onglet **Actions** du dépôt.
 
+> ⚠️ **Binaire non signé — avertissement Windows SmartScreen.**
+> L'exécutable n'étant pas encore signé numériquement, Windows peut afficher au
+> premier lancement « Windows a protégé votre PC » avec « Éditeur : Inconnu ».
+> C'est normal pour un binaire open-source non signé. Pour l'exécuter :
+> cliquez sur **Informations complémentaires → Exécuter quand même**.
+> Par prudence, ne téléchargez l'`.exe` que depuis les **Releases officielles**
+> de ce dépôt.
+>
+> *(La signature de code — via le programme open-source de
+> [SignPath](https://signpath.io/) — est envisagée pour une version future.)*
+
 ### Option B — compilation depuis les sources
 
 Prérequis de build : [Rust](https://rustup.rs/) (la version est épinglée par
@@ -217,6 +228,12 @@ La verbosité est aussi pilotable via la variable d'environnement `RUST_LOG`
 - Cet outil **n'installe aucun pilote noyau**. Si HVCI bloque un composant,
   c'est qu'un pilote tiers (souvent un reste de **LGS**) est en cause —
   désinstallez-le. WinUSB, lui, est signé par Microsoft et HVCI-safe.
+
+**Windows affiche « Éditeur inconnu » / SmartScreen, ou l'antivirus s'inquiète.**
+- Le binaire n'est **pas encore signé** : c'est attendu. Lancez-le via
+  **Informations complémentaires → Exécuter quand même**, et ne le téléchargez
+  que depuis les **Releases officielles**. La signature de code est envisagée
+  pour une version future (voir [Installation](#installation-de-loutil)).
 
 **Côté développement Linux : erreur de permission USB.**
 - L'énumération fonctionne sans privilèges, mais l'ouverture du périphérique
