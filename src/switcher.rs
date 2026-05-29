@@ -133,15 +133,7 @@ fn find_compat_g27(api: &hidapi::HidApi) -> Result<hid::DeviceInfo, Error> {
             continue;
         }
         match hid::classify_product_id(entry.product_id()) {
-            hid::G27Mode::Compatibility => {
-                return Ok(hid::DeviceInfo {
-                    vendor_id: entry.vendor_id(),
-                    product_id: entry.product_id(),
-                    interface_number: entry.interface_number(),
-                    path: entry.path().to_owned(),
-                    mode: hid::G27Mode::Compatibility,
-                });
-            }
+            hid::G27Mode::Compatibility => return Ok(hid::device_info_from(entry)),
             hid::G27Mode::Native => native_seen = true,
             hid::G27Mode::Other => {}
         }
@@ -163,6 +155,17 @@ fn send_report(
     info: &hid::DeviceInfo,
     report: &OutputReport,
 ) -> Result<(), Error> {
+    // Sous Windows, un même G27 peut exposer plusieurs collections HID : on
+    // trace précisément celle que l'on cible afin de diagnostiquer une bascule
+    // qui « réussit » (write OK) sans que le firmware ne réagisse.
+    tracing::debug!(
+        "collection HID ciblée avant write : path={}, interface={}, usage_page={:#06x}, usage={:#06x}",
+        info.path.to_string_lossy(),
+        info.interface_number,
+        info.usage_page,
+        info.usage
+    );
+
     let device = api.open_path(info.path.as_c_str())?;
     let buffer = report.to_buffer();
     let written = device.write(&buffer)?;
