@@ -1,5 +1,7 @@
 # G27 Mode Switcher
 
+[![CI](https://github.com/Ezio-33/g27-mode-switcher/actions/workflows/ci.yml/badge.svg)](https://github.com/Ezio-33/g27-mode-switcher/actions/workflows/ci.yml)
+
 Bascule un volant **Logitech G27** de son mode dégradé par défaut vers son
 **mode natif** (900° de rotation, pédales séparées, retour de force complet),
 **sans installer Logitech Gaming Software (LGS) ni le moindre pilote noyau
