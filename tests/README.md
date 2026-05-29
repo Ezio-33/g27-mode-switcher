@@ -21,11 +21,10 @@ machine sans volant.
 ### Prérequis
 
 - Un **G27 branché** en USB.
-- **Accès USB au périphérique** :
-  - **Windows** : pilote **WinUSB** posé sur l'interface du G27 via
-    [Zadig](https://zadig.akeo.ie/) (voir le `README.md` racine).
-  - **Linux** : droits suffisants pour ouvrir le périphérique (règle `udev`
-    dédiée, ou exécution privilégiée selon la configuration).
+- **Accès HID au périphérique** :
+  - **Windows** : aucun pilote tiers à installer — le pilote HID natif suffit.
+  - **Linux** : accès `hidraw` (règle `udev` dédiée, voir l'annexe du `README.md`
+    racine, ou exécution privilégiée selon la configuration).
 
 ### Lancement
 
