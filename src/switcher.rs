@@ -8,6 +8,8 @@
 //! l'envoi se fait via `HidDevice::write`, sans déposséder le pilote HID du
 //! système (donc sans Zadig/WinUSB).
 
+use std::time::Duration;
+
 use crate::hid::{self, LOGITECH_VENDOR_ID};
 
 /// Octet de préfixe hidapi signifiant « pas de report ID numéroté » : hidapi le
@@ -20,9 +22,23 @@ const HID_NO_REPORT_ID: u8 = 0x00;
 /// Longueur d'une commande de bascule (corps du report, hors préfixe).
 const COMMAND_LEN: usize = 7;
 
-/// Charge utile « switch to G27 with detach ».
+/// Charge utile « revert mode upon USB reset » (1ʳᵉ commande de la séquence).
+/// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c` (`lg4ff_mode_switch_ext09_g27`).
+const MODE_SWITCH_REVERT_ON_RESET: [u8; COMMAND_LEN] = [0xF8, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00];
+
+/// Charge utile « switch to G27 with detach » (2ᵉ commande de la séquence).
 /// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c` (`lg4ff_mode_switch_ext09_g27`).
 const MODE_SWITCH_TO_G27: [u8; COMMAND_LEN] = [0xF8, 0x09, 0x04, 0x01, 0x00, 0x00, 0x00];
+
+/// Délai (en millisecondes) inséré entre les deux commandes de la séquence.
+///
+/// Le noyau Linux envoie les deux commandes d'affilée puis appelle
+/// `hid_hw_wait`, qui draine la file des output reports avant de rendre la main.
+/// En userspace via hidapi, `HidDevice::write` n'offre aucune garantie de
+/// synchronisation équivalente : on insère un court délai pour laisser le
+/// firmware traiter la 1ʳᵉ commande (revert-on-reset) avant d'émettre la 2ᵉ
+/// (switch + detach), qui déclenche la déconnexion/reconnexion USB.
+const INTER_COMMAND_DELAY_MS: u64 = 10;
 
 /// Un HID output report : report ID suivi de sa charge utile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,13 +73,24 @@ impl OutputReport {
     }
 }
 
-/// Construit l'output report qui bascule le G27 en mode natif.
+/// Construit la séquence de bascule du G27 en mode natif.
+///
+/// Deux commandes successives, à l'image du noyau Linux
+/// (`lg4ff_mode_switch_ext09_g27`, `cmd_count = 2`) :
+/// 1. « revert mode upon USB reset » ;
+/// 2. « switch to G27 with detach » (déclenche la reconnexion).
 #[must_use]
-pub fn mode_switch_report() -> OutputReport {
-    OutputReport {
-        report_id: HID_NO_REPORT_ID,
-        payload: &MODE_SWITCH_TO_G27,
-    }
+pub fn mode_switch_sequence() -> [OutputReport; 2] {
+    [
+        OutputReport {
+            report_id: HID_NO_REPORT_ID,
+            payload: &MODE_SWITCH_REVERT_ON_RESET,
+        },
+        OutputReport {
+            report_id: HID_NO_REPORT_ID,
+            payload: &MODE_SWITCH_TO_G27,
+        },
+    ]
 }
 
 /// Résultat d'une bascule réussie (ou simulée).
@@ -100,25 +127,30 @@ pub enum Error {
 /// # Errors
 ///
 /// - [`Error::NoG27Found`] ou [`Error::AlreadyNative`] selon l'état détecté ;
-/// - [`Error::InvalidReport`] si le report construit est invalide ;
+/// - [`Error::InvalidReport`] si une commande construite est invalide ;
 /// - [`Error::Hid`] en cas d'échec d'initialisation hidapi, d'ouverture du
-///   périphérique ou d'écriture du report.
+///   périphérique ou d'écriture d'une commande.
 pub fn switch_to_native_mode(dry_run: bool) -> Result<SwitchOutcome, Error> {
-    let report = mode_switch_report();
-    report.validate()?;
+    let sequence = mode_switch_sequence();
+    for command in &sequence {
+        command.validate()?;
+    }
 
     let api = hidapi::HidApi::new()?;
     let info = find_compat_g27(&api)?;
 
     if dry_run {
-        tracing::info!("simulation : output report construit et validé, aucun octet envoyé");
+        tracing::info!(
+            "simulation : séquence de {} commandes construite et validée, aucun octet envoyé",
+            sequence.len()
+        );
         return Ok(SwitchOutcome {
             device: info,
             dry_run: true,
         });
     }
 
-    send_report(&api, &info, &report)?;
+    send_sequence(&api, &info, &sequence)?;
     Ok(SwitchOutcome {
         device: info,
         dry_run: false,
@@ -147,14 +179,15 @@ fn find_compat_g27(api: &hidapi::HidApi) -> Result<hid::DeviceInfo, Error> {
     }
 }
 
-/// Ouvre le périphérique HID et écrit l'output report de bascule.
+/// Ouvre le périphérique HID et écrit la séquence de commandes de bascule.
 ///
 /// Aucune réclamation/libération d'interface n'est nécessaire : hidapi conserve
-/// le pilote HID natif en place et l'envoi se résout à un `HidDevice::write`.
-fn send_report(
+/// le pilote HID natif en place et l'envoi se résout à des `HidDevice::write`
+/// successifs, espacés de [`INTER_COMMAND_DELAY_MS`].
+fn send_sequence(
     api: &hidapi::HidApi,
     info: &hid::DeviceInfo,
-    report: &OutputReport,
+    sequence: &[OutputReport],
 ) -> Result<(), Error> {
     // Sous Windows, un même G27 peut exposer plusieurs collections HID : on
     // trace précisément celle que l'on cible afin de diagnostiquer une bascule
@@ -168,47 +201,71 @@ fn send_report(
     );
 
     let device = api.open_path(info.path.as_c_str())?;
-    let buffer = report.to_buffer();
-    let written = device.write(&buffer)?;
-    tracing::info!("output report envoyé ({written} octets) ; le G27 va se reconnecter");
+    let delay = Duration::from_millis(INTER_COMMAND_DELAY_MS);
+
+    for (index, command) in sequence.iter().enumerate() {
+        if index > 0 {
+            std::thread::sleep(delay);
+        }
+        let buffer = command.to_buffer();
+        let written = device.write(&buffer)?;
+        tracing::debug!(
+            "commande {}/{} écrite ({} octets) : {:02x?}",
+            index + 1,
+            sequence.len(),
+            written,
+            buffer
+        );
+    }
+
+    tracing::info!(
+        "séquence de bascule envoyée ({} commandes) ; le G27 va se reconnecter",
+        sequence.len()
+    );
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, OutputReport, mode_switch_report};
+    use super::{Error, OutputReport, mode_switch_sequence};
 
     #[test]
-    fn builds_corrected_g27_packet() {
-        let report = mode_switch_report();
-        assert_eq!(report.report_id, 0x00);
-        // Payload G27 (et non G29 : 0x04, pas 0x05/0x01/0x01).
+    fn sequence_has_two_commands() {
+        assert_eq!(mode_switch_sequence().len(), 2);
+    }
+
+    #[test]
+    fn first_command_reverts_on_reset() {
+        // Préfixe 0x00 (« pas de report ID ») + revert-on-reset.
         assert_eq!(
-            report.payload,
-            [0xF8u8, 0x09, 0x04, 0x01, 0x00, 0x00, 0x00].as_slice()
+            mode_switch_sequence()[0].to_buffer(),
+            vec![0x00u8, 0xF8, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00]
         );
     }
 
     #[test]
-    fn buffer_has_no_report_id_prefix() {
-        // Préfixe 0x00 (« pas de report ID ») suivi des 7 octets de la commande.
+    fn second_command_switches_to_g27() {
+        // Payload G27 (et non G29 : 0x04, pas 0x05/0x01/0x01), sans report ID.
         assert_eq!(
-            mode_switch_report().to_buffer(),
+            mode_switch_sequence()[1].to_buffer(),
             vec![0x00u8, 0xF8, 0x09, 0x04, 0x01, 0x00, 0x00, 0x00]
         );
     }
 
     #[test]
-    fn default_report_is_valid() {
-        assert!(mode_switch_report().validate().is_ok());
+    fn all_commands_use_no_report_id_and_are_valid() {
+        for command in mode_switch_sequence() {
+            assert_eq!(command.report_id, 0x00);
+            assert!(command.validate().is_ok());
+        }
     }
 
     #[test]
     fn rejects_wrong_length() {
-        let report = OutputReport {
+        let command = OutputReport {
             payload: &[],
-            ..mode_switch_report()
+            ..mode_switch_sequence()[1]
         };
-        assert!(matches!(report.validate(), Err(Error::InvalidReport(_))));
+        assert!(matches!(command.validate(), Err(Error::InvalidReport(_))));
     }
 }
