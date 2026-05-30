@@ -3,9 +3,9 @@
 ## Tests unitaires (toujours actifs)
 
 La logique métier pure est couverte par des tests unitaires situés dans les
-modules (`src/usb.rs`, `src/switcher.rs`) : classification VID/PID,
-construction du magic packet, validation stricte du transfert de contrôle,
-rendu d'affichage. Ils ne nécessitent aucun matériel :
+modules (`src/hid.rs`, `src/report.rs`, `src/switcher.rs`, `src/range.rs`) :
+classification VID/PID, construction et validation des reports HID (bascule et
+réglage d'angle), rendu d'affichage. Ils ne nécessitent aucun matériel :
 
 ```bash
 cargo test
@@ -36,7 +36,7 @@ cargo test --features hardware-tests
 
 | Test | Vérifie | Effet matériel |
 | --- | --- | --- |
-| `usb::hardware_tests::detects_a_connected_g27` | Le G27 est bien énuméré et reconnu | Lecture seule (aucun écrit) |
+| `hid::hardware_tests::detects_a_connected_g27` | Le G27 est bien énuméré et reconnu | Lecture seule (aucun écrit) |
 
 ### Vérifié manuellement (non automatisé)
 
@@ -51,12 +51,18 @@ cargo run -- status
 # Simulation (n'envoie rien)
 cargo run -- switch --dry-run
 
-# Bascule réelle vers le mode natif
+# Bascule réelle vers le mode natif (règle aussi l'angle sur 900°)
 cargo run -- switch
 
 # Vérifier que le mode a changé
 cargo run -- status
+
+# Régler l'angle de rotation (mode natif requis), 40–900°
+cargo run -- set-range 540
 ```
+
+> 🎯 Vérification de l'angle sous Windows : `joy.cpl` → propriétés du volant.
+> À 900°, une rotation complète correspond à **2,5 tours** de volant.
 
 > ⚠️ La commande `switch` envoie réellement le magic packet : le volant se
 > déconnecte puis réapparaît en mode natif. C'est l'effet attendu, mais il

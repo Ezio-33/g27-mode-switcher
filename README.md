@@ -24,6 +24,8 @@ Windows 11.
 - [Installation de l'outil](#installation-de-loutil)
 - [Migration depuis la v0.1.0](#migration-depuis-la-v010)
 - [Utilisation](#utilisation)
+- [Réglage de l'angle de rotation](#réglage-de-langle-de-rotation)
+- [Mapping natif du G27](#mapping-natif-du-g27)
 - [Dépannage](#dépannage)
 - [Annexe : accès HID sous Linux (règle udev)](#annexe--accès-hid-sous-linux-règle-udev)
 - [Limitations](#limitations)
@@ -95,6 +97,11 @@ PID `0xC29B`. Windows lui applique alors **automatiquement son pilote manette de
 jeu HID natif** (signé Microsoft, sans composant Logitech) — donc **sans rien
 qui contrarie HVCI**.
 
+Une fois le volant réapparu en mode natif, l'outil lui envoie une **dernière
+commande HID** (dérivée de `lg4ff_set_range_g25`) pour régler l'**angle de
+rotation à 900°** — voir [Réglage de l'angle](#réglage-de-langle-de-rotation).
+Ce réglage automatique se désactive avec `--no-range`.
+
 > 💡 **Pourquoi pas de pilote USB brut (WinUSB) ?** Une approche USB raw type
 > WinUSB doit **déposséder** le pilote HID du volant. Or le firmware du G27 en
 > mode compat attend un dialogue HID : privé de son pilote HID, il part en
@@ -119,7 +126,8 @@ qui contrarie HVCI**.
 1. Récupérez `g27-mode-switcher.exe` (voir [Installation](#installation-de-loutil)).
 2. Branchez le G27.
 3. Vérifiez l'état : `g27-mode-switcher status`.
-4. Basculez : `g27-mode-switcher switch`. Le volant se reconnecte en mode natif.
+4. Basculez : `g27-mode-switcher switch`. Le volant se reconnecte en mode natif
+   et son angle de rotation est réglé automatiquement sur **900°**.
 
 C'est tout. Aucune étape d'installation de pilote.
 
@@ -206,11 +214,17 @@ g27-mode-switcher status
 # Lister tous les périphériques Logitech détectés
 g27-mode-switcher list
 
-# Basculer le volant en mode natif
+# Basculer le volant en mode natif (règle aussi l'angle sur 900°)
 g27-mode-switcher switch
+
+# Basculer sans régler automatiquement l'angle de rotation
+g27-mode-switcher switch --no-range
 
 # Simuler la bascule sans rien envoyer au matériel
 g27-mode-switcher switch --dry-run
+
+# Régler l'angle de rotation (mode natif requis), de 40° à 900°
+g27-mode-switcher set-range 900
 
 # Logs détaillés (-v : debug, -vv : trace)
 g27-mode-switcher -v switch
@@ -223,6 +237,50 @@ La verbosité est aussi pilotable via la variable d'environnement `RUST_LOG`
 > chaque rebranchement / redémarrage. Relancez simplement `switch`. Vous pouvez
 > automatiser ce lancement au démarrage de Windows (raccourci dans le dossier
 > *Démarrage*, ou tâche planifiée).
+
+## Réglage de l'angle de rotation
+
+En mode natif, le G27 accepte un **angle de rotation** réglable de **40° à
+900°**. La commande `switch` applique **900°** par défaut ; la commande
+`set-range` permet de choisir une autre valeur, par exemple selon le type de
+course :
+
+```bash
+g27-mode-switcher set-range 360   # monoplaces / F1
+g27-mode-switcher set-range 540   # GT / endurance
+g27-mode-switcher set-range 720   # rallye
+g27-mode-switcher set-range 900   # camion / simulation (pleine échelle)
+```
+
+- Le réglage **exige le mode natif** (`0xC29B`). Si le volant est encore en mode
+  compatibilité, l'outil vous invite à lancer `switch` d'abord.
+- Une valeur hors de `[40, 900]` est refusée avec un message explicite.
+- Pour vérifier l'effet sous Windows : `joy.cpl` → propriétés du volant ; à 900°,
+  une rotation complète correspond à **2,5 tours** de volant.
+
+> ℹ️ Beaucoup de jeux imposent leur propre angle de rotation. Le réglage de cet
+> outil sert de **valeur par défaut au niveau du firmware**, utile hors jeu ou
+> pour les titres qui respectent l'angle matériel.
+
+## Mapping natif du G27
+
+En mode natif, Windows expose le G27 comme une **manette de jeu HID** standard.
+Les axes et boutons sont remontés ainsi (utile pour configurer un jeu) :
+
+| Élément | Entrée HID |
+| --- | --- |
+| Volant | Axe **X** |
+| Pédale d'embrayage | Axe **Y** |
+| Pédale d'accélérateur | Axe **Z** |
+| Pédale de frein | Axe **RotationZ** |
+| Boîte H — 1ʳᵉ … 6ᵉ | Boutons **13** à **18** |
+| Boîte H — marche arrière | Bouton **23** |
+
+> 🎮 Certains jeux ne permettent pas de **remapper les positions de la boîte H**
+> (les six rapports sont vus comme des boutons distincts, pas comme un sélecteur).
+> La **v0.3.0** prévue apportera un **mapping boutons → clavier** (plus une
+> interface graphique) pour contourner cette limite — voir la
+> [feuille de route](#feuille-de-route).
 
 ## Dépannage
 
@@ -305,7 +363,11 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 7. ✅ Intégration continue (GitHub Actions).
 8. ✅ Documentation utilisateur.
 9. ✅ Première version `v0.1.0`.
-10. ✅ `v0.2.0` : passage à l'API HID native (`hidapi`), suppression de Zadig.
+10. ✅ `v0.2.0` : passage à l'API HID native (`hidapi`), suppression de Zadig,
+    commande `set-range` et réglage automatique de l'angle à 900° après bascule.
+11. 🔜 `v0.3.0` : **interface graphique** et **keymapper** (mapping des boutons
+    du G27 — notamment la boîte H — vers des touches clavier) pour les jeux qui
+    ne savent pas remapper la boîte H.
 
 ## Références
 
