@@ -35,6 +35,15 @@ sans Zadig), sans dépendance externe à installer côté utilisateur.
 - Après l'envoi, le volant simule un reconnect USB et réapparaît avec le PID
   cible. Windows applique alors automatiquement son driver HID-compliant game
   controller natif (sans driver Logitech), HVCI-safe.
+- **Réglage de l'angle de rotation (mode natif uniquement)** : commande HID de
+  7 octets reprise de `lg4ff_set_range_g25` (`drivers/hid/hid-lg4ff.c`) :
+  `[0xf8, 0x81, range_lo, range_hi, 0x00, 0x00, 0x00]`, avec
+  `range_lo = range & 0xff` et `range_hi = (range >> 8) & 0xff` (little-endian).
+  Bornes valides : `40 ≤ range ≤ 900`. Même convention hidapi (préfixe `0x00`,
+  pas de report ID). Exposée via la sous-commande `set-range <degrés>` ; `switch`
+  l'applique automatiquement à `900` après reconnexion en `0xC29B` (désactivable
+  via `--no-range`). Le réglage est **silencieux en mode compat** : on exige donc
+  le PID natif avant de l'envoyer.
 - **Important (leçon matérielle, v0.2.0)** : on reste sur le **pilote HID natif**.
   Déposséder ce pilote au profit de WinUSB (approche USB raw type Zadig) place le
   firmware du G27 en mode compat dans une **boucle d'énumération USB infinie** —
@@ -162,8 +171,8 @@ contamination GPL.
    VID/PID, affichage CLI propre.
 3. **Module `switcher`** : construction du magic packet, envoi via HID output
    report, gestion des erreurs.
-4. **CLI** via `clap` : sous-commandes `list`, `switch`, `status`,
-   `--verbose`, `--dry-run`.
+4. **CLI** via `clap` : sous-commandes `list`, `switch`, `status`, `set-range`,
+   `--verbose`, `--dry-run`, `--no-range`.
 5. **Tests** unitaires sur la construction du packet et le parsing.
 6. **Cross-compile Windows** : config `.cargo/config.toml` + tests de build.
 7. **CI GitHub Actions** : workflow complet.
@@ -171,7 +180,11 @@ contamination GPL.
    simplifiée, exemples d'usage, troubleshooting.
 9. **Tag v0.1.0** et release GitHub.
 10. **Refactor v0.2.0** : passage de `rusb`/WinUSB à l'API HID native
-    (`hidapi`), suppression de la dépendance à Zadig.
+    (`hidapi`), suppression de la dépendance à Zadig. Module `report` (envoi HID
+    factorisé), module `range` (commande `set-range`, réglage auto à 900° après
+    `switch`).
+11. **v0.3.0 (prévu)** : interface graphique + keymapper (mapping des boutons du
+    G27, notamment la boîte H, vers le clavier) pour les jeux sans remap de boîte.
 
 ## Notes importantes pour Claude Code
 
