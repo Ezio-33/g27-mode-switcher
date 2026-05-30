@@ -2,6 +2,7 @@
 
 mod cli;
 mod hid;
+mod report;
 mod switcher;
 
 use std::process::ExitCode;
