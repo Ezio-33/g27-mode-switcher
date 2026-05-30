@@ -9,32 +9,23 @@
 //! (`0x05, 0x01, 0x01` au lieu de `0x04, 0x01, 0x00`).
 //!
 //! Côté USB bas niveau, le noyau émet ces commandes comme des requêtes
-//! `SET_REPORT` (classe HID). L'envoi passe ici par l'API HID native (`hidapi`)
-//! via `HidDevice::write`, sans déposséder le pilote HID du système (donc sans
-//! Zadig/WinUSB). Les commandes n'ayant pas de report ID, le buffer est préfixé
-//! de `0x00` (octet « pas de report ID », non transmis).
+//! `SET_REPORT` (classe HID). La représentation des reports et leur envoi sont
+//! factorisés dans le module [`crate::report`] ; l'énumération et la recherche
+//! du volant le sont dans [`crate::hid`].
 
 use std::time::Duration;
 
-use crate::hid::{self, LOGITECH_VENDOR_ID};
-
-/// Octet de préfixe hidapi signifiant « pas de report ID numéroté » : hidapi le
-/// retire et ne le transmet PAS sur le fil. Les commandes Logitech de bascule
-/// sont des reports non numérotés de 7 octets.
-/// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c` (les commandes y sont des
-/// blocs de 7 octets, sans report ID préfixé).
-const HID_NO_REPORT_ID: u8 = 0x00;
-
-/// Longueur d'une commande de bascule (corps du report, hors préfixe).
-const COMMAND_LEN: usize = 7;
+use crate::hid::{self, G27Mode};
+use crate::report::{self, OutputReport};
 
 /// Charge utile « revert mode upon USB reset » (1ʳᵉ commande de la séquence).
 /// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c` (`lg4ff_mode_switch_ext09_g27`).
-const MODE_SWITCH_REVERT_ON_RESET: [u8; COMMAND_LEN] = [0xF8, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00];
+const MODE_SWITCH_REVERT_ON_RESET: [u8; report::COMMAND_LEN] =
+    [0xF8, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 /// Charge utile « switch to G27 with detach » (2ᵉ commande de la séquence).
 /// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c` (`lg4ff_mode_switch_ext09_g27`).
-const MODE_SWITCH_TO_G27: [u8; COMMAND_LEN] = [0xF8, 0x09, 0x04, 0x01, 0x00, 0x00, 0x00];
+const MODE_SWITCH_TO_G27: [u8; report::COMMAND_LEN] = [0xF8, 0x09, 0x04, 0x01, 0x00, 0x00, 0x00];
 
 /// Délai (en millisecondes) inséré entre les deux commandes de la séquence.
 ///
@@ -46,39 +37,6 @@ const MODE_SWITCH_TO_G27: [u8; COMMAND_LEN] = [0xF8, 0x09, 0x04, 0x01, 0x00, 0x0
 /// (switch + detach), qui déclenche la déconnexion/reconnexion USB.
 const INTER_COMMAND_DELAY_MS: u64 = 10;
 
-/// Un HID output report : report ID suivi de sa charge utile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OutputReport {
-    /// Report ID HID (premier octet du buffer envoyé à `HidDevice::write`).
-    pub report_id: u8,
-    /// Corps du report.
-    pub payload: &'static [u8],
-}
-
-impl OutputReport {
-    /// Valide le report avant tout envoi au matériel.
-    ///
-    /// # Errors
-    ///
-    /// Renvoie [`Error::InvalidReport`] si la charge utile ne fait pas
-    /// exactement [`COMMAND_LEN`] octets (format attendu par le firmware).
-    pub fn validate(&self) -> Result<(), Error> {
-        if self.payload.len() != COMMAND_LEN {
-            return Err(Error::InvalidReport("report payload must be 7 bytes"));
-        }
-        Ok(())
-    }
-
-    /// Sérialise le report en buffer HID : `[report_id, payload…]`.
-    #[must_use]
-    pub fn to_buffer(self) -> Vec<u8> {
-        let mut buffer = Vec::with_capacity(1 + self.payload.len());
-        buffer.push(self.report_id);
-        buffer.extend_from_slice(self.payload);
-        buffer
-    }
-}
-
 /// Construit la séquence de bascule du G27 en mode natif.
 ///
 /// Deux commandes successives, à l'image du noyau Linux
@@ -88,14 +46,8 @@ impl OutputReport {
 #[must_use]
 pub fn mode_switch_sequence() -> [OutputReport; 2] {
     [
-        OutputReport {
-            report_id: HID_NO_REPORT_ID,
-            payload: &MODE_SWITCH_REVERT_ON_RESET,
-        },
-        OutputReport {
-            report_id: HID_NO_REPORT_ID,
-            payload: &MODE_SWITCH_TO_G27,
-        },
+        OutputReport::unnumbered(MODE_SWITCH_REVERT_ON_RESET.to_vec()),
+        OutputReport::unnumbered(MODE_SWITCH_TO_G27.to_vec()),
     ]
 }
 
@@ -111,38 +63,34 @@ pub struct SwitchOutcome {
 /// Erreurs de la bascule de mode.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Échec d'une opération HID (initialisation, ouverture, écriture).
-    #[error("HID operation failed: {0}")]
-    Hid(#[from] hidapi::HidError),
+    /// Échec de construction ou d'envoi d'un report HID.
+    #[error(transparent)]
+    Report(#[from] report::Error),
     /// Aucun G27 n'a été trouvé.
     #[error("no Logitech G27 was found")]
     NoG27Found,
     /// Un G27 est présent mais déjà en mode natif.
     #[error("a G27 was found but is already in native mode")]
     AlreadyNative,
-    /// Le report construit est invalide.
-    #[error("invalid output report: {0}")]
-    InvalidReport(&'static str),
 }
 
 /// Bascule le premier G27 détecté en mode compatibilité vers le mode natif.
 ///
-/// En `dry_run`, le report est construit et validé, mais aucun octet n'est
+/// En `dry_run`, la séquence est construite et validée, mais aucun octet n'est
 /// envoyé au matériel.
 ///
 /// # Errors
 ///
 /// - [`Error::NoG27Found`] ou [`Error::AlreadyNative`] selon l'état détecté ;
-/// - [`Error::InvalidReport`] si une commande construite est invalide ;
-/// - [`Error::Hid`] en cas d'échec d'initialisation hidapi, d'ouverture du
-///   périphérique ou d'écriture d'une commande.
+/// - [`Error::Report`] si une commande est invalide ou si l'envoi HID échoue
+///   (initialisation hidapi, ouverture du périphérique, écriture).
 pub fn switch_to_native_mode(dry_run: bool) -> Result<SwitchOutcome, Error> {
     let sequence = mode_switch_sequence();
     for command in &sequence {
         command.validate()?;
     }
 
-    let api = hidapi::HidApi::new()?;
+    let api = hidapi::HidApi::new().map_err(report::Error::from)?;
     let info = find_compat_g27(&api)?;
 
     if dry_run {
@@ -156,7 +104,16 @@ pub fn switch_to_native_mode(dry_run: bool) -> Result<SwitchOutcome, Error> {
         });
     }
 
-    send_sequence(&api, &info, &sequence)?;
+    report::send_reports(
+        &api,
+        &info,
+        &sequence,
+        Duration::from_millis(INTER_COMMAND_DELAY_MS),
+    )?;
+    tracing::info!(
+        "séquence de bascule envoyée ({} commandes) ; le G27 va se reconnecter",
+        sequence.len()
+    );
     Ok(SwitchOutcome {
         device: info,
         dry_run: false,
@@ -165,75 +122,15 @@ pub fn switch_to_native_mode(dry_run: bool) -> Result<SwitchOutcome, Error> {
 
 /// Recherche un G27 en mode compatibilité dans l'énumération HID.
 fn find_compat_g27(api: &hidapi::HidApi) -> Result<hid::DeviceInfo, Error> {
-    let mut native_seen = false;
-
-    for entry in api.device_list() {
-        if entry.vendor_id() != LOGITECH_VENDOR_ID {
-            continue;
-        }
-        match hid::classify_product_id(entry.product_id()) {
-            hid::G27Mode::Compatibility => return Ok(hid::device_info_from(entry)),
-            hid::G27Mode::Native => native_seen = true,
-            hid::G27Mode::Other => {}
-        }
-    }
-
-    if native_seen {
-        Err(Error::AlreadyNative)
-    } else {
-        Err(Error::NoG27Found)
-    }
-}
-
-/// Ouvre le périphérique HID et écrit la séquence de commandes de bascule.
-///
-/// Aucune réclamation/libération d'interface n'est nécessaire : hidapi conserve
-/// le pilote HID natif en place et l'envoi se résout à des `HidDevice::write`
-/// successifs, espacés de [`INTER_COMMAND_DELAY_MS`].
-fn send_sequence(
-    api: &hidapi::HidApi,
-    info: &hid::DeviceInfo,
-    sequence: &[OutputReport],
-) -> Result<(), Error> {
-    // Sous Windows, un même G27 peut exposer plusieurs collections HID : on
-    // trace précisément celle que l'on cible afin de diagnostiquer une bascule
-    // qui « réussit » (write OK) sans que le firmware ne réagisse.
-    tracing::debug!(
-        "collection HID ciblée avant write : path={}, interface={}, usage_page={:#06x}, usage={:#06x}",
-        info.path.to_string_lossy(),
-        info.interface_number,
-        info.usage_page,
-        info.usage
-    );
-
-    let device = api.open_path(info.path.as_c_str())?;
-    let delay = Duration::from_millis(INTER_COMMAND_DELAY_MS);
-
-    for (index, command) in sequence.iter().enumerate() {
-        if index > 0 {
-            std::thread::sleep(delay);
-        }
-        let buffer = command.to_buffer();
-        let written = device.write(&buffer)?;
-        tracing::debug!(
-            "commande {}/{} écrite ({} octets) : {:02x?}",
-            index + 1,
-            sequence.len(),
-            written,
-            buffer
-        );
-    }
-
-    tracing::info!(
-        "séquence de bascule envoyée ({} commandes) ; le G27 va se reconnecter",
-        sequence.len()
-    );
-    Ok(())
+    hid::find_g27(api, G27Mode::Compatibility).map_err(|other| match other {
+        Some(G27Mode::Native) => Error::AlreadyNative,
+        _ => Error::NoG27Found,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, OutputReport, mode_switch_sequence};
+    use super::mode_switch_sequence;
 
     #[test]
     fn sequence_has_two_commands() {
@@ -264,14 +161,5 @@ mod tests {
             assert_eq!(command.report_id, 0x00);
             assert!(command.validate().is_ok());
         }
-    }
-
-    #[test]
-    fn rejects_wrong_length() {
-        let command = OutputReport {
-            payload: &[],
-            ..mode_switch_sequence()[1]
-        };
-        assert!(matches!(command.validate(), Err(Error::InvalidReport(_))));
     }
 }
