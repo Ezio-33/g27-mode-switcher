@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use clap::{ArgAction, Parser, Subcommand};
 
-use crate::{hid, switcher};
+use crate::{hid, range, switcher};
 
 /// Bascule un volant Logitech G27 vers son mode natif, sans pilote propriétaire.
 #[derive(Debug, Parser)]
@@ -31,6 +31,11 @@ enum Command {
     },
     /// Affiche le mode courant du G27 détecté.
     Status,
+    /// Règle l'angle de rotation du G27 (mode natif requis), de 40° à 900°.
+    SetRange {
+        /// Angle de rotation souhaité, en degrés (40–900).
+        degrees: u16,
+    },
 }
 
 impl Cli {
@@ -41,6 +46,7 @@ impl Cli {
             Command::List => run_list(),
             Command::Switch { dry_run } => run_switch(dry_run),
             Command::Status => run_status(),
+            Command::SetRange { degrees } => run_set_range(degrees),
         }
     }
 }
@@ -132,6 +138,37 @@ fn run_status() -> ExitCode {
         }
         Err(error) => {
             eprintln!("Erreur : {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Règle l'angle de rotation du G27 (mode natif requis).
+fn run_set_range(degrees: u16) -> ExitCode {
+    match range::set_range(degrees) {
+        Ok(outcome) => {
+            println!(
+                "Angle de rotation réglé sur {}° pour le {}.",
+                outcome.degrees, outcome.device
+            );
+            ExitCode::SUCCESS
+        }
+        Err(range::Error::OutOfRange(value)) => {
+            eprintln!("Angle invalide : {value}°. Indiquez une valeur entre 40 et 900 degrés.");
+            ExitCode::FAILURE
+        }
+        Err(range::Error::NotNative) => {
+            eprintln!(
+                "Le G27 est en mode compatibilité : le réglage d'angle n'a aucun effet. Lancez « switch » d'abord."
+            );
+            ExitCode::FAILURE
+        }
+        Err(range::Error::NoG27Found) => {
+            eprintln!("Aucun G27 détecté. Branchez le volant puis réessayez.");
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            eprintln!("Échec du réglage d'angle : {error}");
             ExitCode::FAILURE
         }
     }
