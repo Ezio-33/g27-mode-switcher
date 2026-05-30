@@ -25,6 +25,10 @@ const MIN_RANGE_DEGREES: u16 = 40;
 /// Angle de rotation maximal du G27 (degrés) — pleine échelle (2,5 tours).
 const MAX_RANGE_DEGREES: u16 = 900;
 
+/// Angle appliqué par défaut (pleine échelle), notamment automatiquement après
+/// une bascule en mode natif.
+pub const DEFAULT_RANGE_DEGREES: u16 = MAX_RANGE_DEGREES;
+
 /// Résultat d'un réglage d'angle réussi.
 #[derive(Debug, Clone)]
 pub struct RangeOutcome {

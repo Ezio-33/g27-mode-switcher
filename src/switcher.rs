@@ -13,9 +13,10 @@
 //! factorisés dans le module [`crate::report`] ; l'énumération et la recherche
 //! du volant le sont dans [`crate::hid`].
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::hid::{self, G27Mode};
+use crate::range;
 use crate::report::{self, OutputReport};
 
 /// Charge utile « revert mode upon USB reset » (1ʳᵉ commande de la séquence).
@@ -37,6 +38,14 @@ const MODE_SWITCH_TO_G27: [u8; report::COMMAND_LEN] = [0xF8, 0x09, 0x04, 0x01, 0
 /// (switch + detach), qui déclenche la déconnexion/reconnexion USB.
 const INTER_COMMAND_DELAY_MS: u64 = 10;
 
+/// Intervalle entre deux scrutations de l'énumération HID pendant l'attente de
+/// la reconnexion du volant en mode natif (millisecondes).
+const RECONNECT_POLL_INTERVAL_MS: u64 = 200;
+
+/// Durée maximale d'attente de la réapparition du G27 en mode natif après la
+/// bascule, avant d'abandonner le réglage automatique de l'angle (millisecondes).
+const RECONNECT_TIMEOUT_MS: u64 = 6000;
+
 /// Construit la séquence de bascule du G27 en mode natif.
 ///
 /// Deux commandes successives, à l'image du noyau Linux
@@ -51,6 +60,18 @@ pub fn mode_switch_sequence() -> [OutputReport; 2] {
     ]
 }
 
+/// Issue du réglage automatique de l'angle de rotation après la bascule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RangeStep {
+    /// Réglage non tenté : simulation (`--dry-run`) ou option `--no-range`.
+    Skipped,
+    /// Angle réglé automatiquement à la valeur indiquée (degrés).
+    Applied(u16),
+    /// Bascule réussie, mais l'angle n'a pas pu être réglé automatiquement
+    /// (volant non réapparu à temps ou échec d'envoi) : à faire manuellement.
+    Deferred(u16),
+}
+
 /// Résultat d'une bascule réussie (ou simulée).
 #[derive(Debug, Clone)]
 pub struct SwitchOutcome {
@@ -58,6 +79,8 @@ pub struct SwitchOutcome {
     pub device: hid::DeviceInfo,
     /// Vrai si l'envoi a été simulé (aucun octet réellement transmis).
     pub dry_run: bool,
+    /// Issue du réglage automatique de l'angle de rotation.
+    pub range: RangeStep,
 }
 
 /// Erreurs de la bascule de mode.
@@ -77,20 +100,24 @@ pub enum Error {
 /// Bascule le premier G27 détecté en mode compatibilité vers le mode natif.
 ///
 /// En `dry_run`, la séquence est construite et validée, mais aucun octet n'est
-/// envoyé au matériel.
+/// envoyé au matériel. Lorsque `apply_range` est vrai (et hors `dry_run`), une
+/// fois le volant réapparu en mode natif, son angle de rotation est réglé
+/// automatiquement à [`range::DEFAULT_RANGE_DEGREES`] (900°). Si le volant ne
+/// réapparaît pas à temps, la bascule reste un succès et l'issue indique un
+/// réglage différé ([`RangeStep::Deferred`]).
 ///
 /// # Errors
 ///
 /// - [`Error::NoG27Found`] ou [`Error::AlreadyNative`] selon l'état détecté ;
 /// - [`Error::Report`] si une commande est invalide ou si l'envoi HID échoue
 ///   (initialisation hidapi, ouverture du périphérique, écriture).
-pub fn switch_to_native_mode(dry_run: bool) -> Result<SwitchOutcome, Error> {
+pub fn switch_to_native_mode(dry_run: bool, apply_range: bool) -> Result<SwitchOutcome, Error> {
     let sequence = mode_switch_sequence();
     for command in &sequence {
         command.validate()?;
     }
 
-    let api = hidapi::HidApi::new().map_err(report::Error::from)?;
+    let mut api = hidapi::HidApi::new().map_err(report::Error::from)?;
     let info = find_compat_g27(&api)?;
 
     if dry_run {
@@ -101,6 +128,7 @@ pub fn switch_to_native_mode(dry_run: bool) -> Result<SwitchOutcome, Error> {
         return Ok(SwitchOutcome {
             device: info,
             dry_run: true,
+            range: RangeStep::Skipped,
         });
     }
 
@@ -114,9 +142,17 @@ pub fn switch_to_native_mode(dry_run: bool) -> Result<SwitchOutcome, Error> {
         "séquence de bascule envoyée ({} commandes) ; le G27 va se reconnecter",
         sequence.len()
     );
+
+    let range = if apply_range {
+        apply_default_range(&mut api)
+    } else {
+        RangeStep::Skipped
+    };
+
     Ok(SwitchOutcome {
         device: info,
         dry_run: false,
+        range,
     })
 }
 
@@ -126,6 +162,57 @@ fn find_compat_g27(api: &hidapi::HidApi) -> Result<hid::DeviceInfo, Error> {
         Some(G27Mode::Native) => Error::AlreadyNative,
         _ => Error::NoG27Found,
     })
+}
+
+/// Attend la réapparition du G27 en mode natif (après le detach/reconnect) puis
+/// lui applique l'angle de rotation par défaut.
+///
+/// Ne renvoie jamais d'erreur : la bascule ayant déjà eu lieu, tout échec de
+/// réglage est tracé et reporté comme [`RangeStep::Deferred`] afin que
+/// l'utilisateur le rejoue manuellement via `set-range`.
+fn apply_default_range(api: &mut hidapi::HidApi) -> RangeStep {
+    let degrees = range::DEFAULT_RANGE_DEGREES;
+    let Some(native) = wait_for_native_g27(api) else {
+        tracing::warn!("le G27 n'est pas réapparu en mode natif à temps ; réglage d'angle différé");
+        return RangeStep::Deferred(degrees);
+    };
+
+    match send_default_range(api, &native, degrees) {
+        Ok(()) => RangeStep::Applied(degrees),
+        Err(error) => {
+            tracing::warn!("réglage automatique de l'angle échoué : {error} ; réglage différé");
+            RangeStep::Deferred(degrees)
+        }
+    }
+}
+
+/// Scrute l'énumération HID jusqu'à voir le G27 en mode natif, ou jusqu'au
+/// délai [`RECONNECT_TIMEOUT_MS`].
+fn wait_for_native_g27(api: &mut hidapi::HidApi) -> Option<hid::DeviceInfo> {
+    let deadline = Instant::now() + Duration::from_millis(RECONNECT_TIMEOUT_MS);
+    loop {
+        if let Err(error) = api.refresh_devices() {
+            tracing::debug!("re-énumération HID impossible : {error}");
+        } else if let Ok(native) = hid::find_g27(api, G27Mode::Native) {
+            return Some(native);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(RECONNECT_POLL_INTERVAL_MS));
+    }
+}
+
+/// Construit et envoie la commande de réglage d'angle par défaut sur le volant
+/// natif fraîchement reconnecté.
+fn send_default_range(
+    api: &hidapi::HidApi,
+    native: &hid::DeviceInfo,
+    degrees: u16,
+) -> Result<(), report::Error> {
+    let report = range::set_range_report(degrees)
+        .map_err(|_| report::Error::InvalidReport("default range out of bounds"))?;
+    report::send_reports(api, native, std::slice::from_ref(&report), Duration::ZERO)
 }
 
 #[cfg(test)]
