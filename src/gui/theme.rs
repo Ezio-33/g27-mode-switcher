@@ -20,14 +20,45 @@ pub const BORDER: Color32 = Color32::from_rgb(0x1f, 0x2a, 0x38);
 pub const BORDER_STRONG: Color32 = Color32::from_rgb(0x2c, 0x3a, 0x4c);
 pub const GOLD: Color32 = Color32::from_rgb(0xd4, 0xa8, 0x43);
 pub const GOLD_LIGHT: Color32 = Color32::from_rgb(0xf0, 0xc7, 0x5e);
+pub const GOLD_DARK: Color32 = Color32::from_rgb(0xa0, 0x7f, 0x2c);
 pub const TEXT: Color32 = Color32::from_rgb(0xf5, 0xec, 0xd1);
 pub const TEXT_MUTED: Color32 = Color32::from_rgb(0xb8, 0xc2, 0xd0);
 pub const TEXT_DIM: Color32 = Color32::from_rgb(0x8a, 0x96, 0xaa);
 pub const SUCCESS: Color32 = Color32::from_rgb(0x6f, 0xd1, 0x7a);
 pub const WARNING: Color32 = Color32::from_rgb(0xf0, 0xc7, 0x5e);
+pub const LIVE: Color32 = Color32::from_rgb(0xff, 0x3b, 0x46);
 
 /// Clé de la famille de police des titres (Cinzel).
 const CINZEL: &str = "cinzel";
+
+/// Famille de police des titres (Cinzel) pour composer un `RichText`.
+#[must_use]
+pub fn heading_family() -> FontFamily {
+    FontFamily::Name(CINZEL.into())
+}
+
+/// Cadre d'une carte de contenu (fond carte, bordure, coins arrondis, marge).
+pub fn card_frame() -> egui::Frame {
+    egui::Frame::default()
+        .fill(BG_CARD)
+        .stroke(Stroke::new(1.0, BORDER))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::same(14))
+}
+
+/// Cadre du journal : identique à une carte mais sur le fond le plus profond.
+pub fn journal_frame() -> egui::Frame {
+    card_frame().fill(BG_DEEP)
+}
+
+/// Cadre arrondi de la pastille de statut.
+pub fn pill_frame() -> egui::Frame {
+    egui::Frame::default()
+        .fill(BG_ELEVATED)
+        .stroke(Stroke::new(1.0, BORDER_STRONG))
+        .corner_radius(egui::CornerRadius::same(10))
+        .inner_margin(egui::Margin::symmetric(10, 5))
+}
 
 /// Installe la police Cinzel et le thème sombre sur le contexte egui.
 pub fn install(ctx: &egui::Context) {

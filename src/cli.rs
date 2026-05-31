@@ -3,6 +3,7 @@
 use std::process::ExitCode;
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+use tracing_subscriber::EnvFilter;
 
 use g27_mode_switcher::{autocenter, hid, range, switcher};
 
@@ -64,10 +65,25 @@ impl Cli {
     #[must_use]
     pub fn run(self) -> ExitCode {
         match self.command {
-            Some(command) => dispatch(command),
-            None => run_gui(),
+            Some(command) => {
+                init_cli_logging(self.verbose);
+                dispatch(command)
+            }
+            None => crate::gui::run(self.verbose),
         }
     }
+}
+
+/// Initialise le logging CLI (sortie texte vers le terminal).
+fn init_cli_logging(verbose: u8) {
+    let default_level = match verbose {
+        0 => "info",
+        1 => "debug",
+        _ => "trace",
+    };
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
 /// Exécute une sous-commande CLI et renvoie son code de sortie.
@@ -82,17 +98,6 @@ fn dispatch(command: Command) -> ExitCode {
         Command::Status => run_status(),
         Command::SetRange { degrees } => run_set_range(degrees),
         Command::SetAutocenter { state } => run_set_autocenter(state),
-    }
-}
-
-/// Lance l'interface graphique (mode par défaut).
-fn run_gui() -> ExitCode {
-    match crate::gui::run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("Erreur de l'interface graphique : {error}");
-            ExitCode::FAILURE
-        }
     }
 }
 

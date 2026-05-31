@@ -1,31 +1,44 @@
 //! Interface graphique eframe/egui du G27 Mode Switcher.
 
 mod app;
+mod log;
 mod theme;
+
+use std::process::ExitCode;
 
 use eframe::egui;
 
 /// Lance la fenêtre principale (mode par défaut, sans sous-commande CLI).
 ///
-/// # Errors
-///
-/// Renvoie l'erreur d'eframe si la fenêtre ne peut pas être créée ou si la
-/// boucle d'événements échoue (backend graphique indisponible, p. ex.).
-pub fn run() -> eframe::Result<()> {
+/// Initialise le journal partagé et le pont `tracing`, applique le thème, puis
+/// exécute la boucle eframe. Renvoie le code de sortie du processus.
+#[must_use]
+pub fn run(verbose: u8) -> ExitCode {
+    let buffer = log::LogBuffer::new();
+    log::init(verbose, buffer.clone());
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([460.0, 600.0])
-            .with_min_inner_size([400.0, 480.0])
+            .with_inner_size([480.0, 680.0])
+            .with_min_inner_size([420.0, 560.0])
             .with_title("G27 Mode Switcher"),
         ..Default::default()
     };
 
-    eframe::run_native(
+    let result = eframe::run_native(
         "G27 Mode Switcher",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             theme::install(&cc.egui_ctx);
-            Ok(Box::new(app::App::new()))
+            Ok(Box::new(app::App::new(buffer.clone())))
         }),
-    )
+    );
+
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Erreur de l'interface graphique : {error}");
+            ExitCode::FAILURE
+        }
+    }
 }

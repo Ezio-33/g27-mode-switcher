@@ -15,6 +15,11 @@ thiserror = "2.0.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
+# Sous Windows uniquement : rattachement de la console parente en mode CLI
+# (le binaire est compilé en sous-système « windows » pour la GUI).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
+
 [features]
 # Tests d'intégration nécessitant un G27 réellement branché (opt-in).
 # Lancement : `cargo test --features hardware-tests`. Voir tests/README.md.
