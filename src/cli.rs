@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
-use crate::{autocenter, hid, range, switcher};
+use g27_mode_switcher::{autocenter, hid, range, switcher};
 
 /// Bascule un volant Logitech G27 vers son mode natif, sans pilote propriétaire.
 #[derive(Debug, Parser)]

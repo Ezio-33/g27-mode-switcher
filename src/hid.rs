@@ -114,15 +114,19 @@ pub(crate) fn device_info_from(entry: &hidapi::DeviceInfo) -> DeviceInfo {
 
 /// Recherche un G27 dans le mode demandé au sein de l'énumération HID.
 ///
-/// Renvoie `Ok(info)` si un G27 dans le mode `wanted` est présent. Sinon, en
-/// cas d'échec, renvoie `Err(other)` où `other` vaut :
+/// Renvoie `Ok(info)` si un G27 dans le mode `wanted` est présent.
+///
+/// Factorisé pour servir à la fois la bascule (`switcher`, cherche le compat) et
+/// le réglage d'angle (`range`, exige le natif).
+///
+/// # Errors
+///
+/// Renvoie `Err(other)` lorsqu'aucun G27 n'est dans le mode `wanted`, où `other`
+/// vaut :
 /// - `Some(mode)` si un G27 est branché mais dans un autre mode (compat alors
 ///   que l'on voulait le natif, ou l'inverse) — permet à l'appelant d'émettre
 ///   un message d'erreur précis ;
 /// - `None` si aucun G27 n'est branché du tout.
-///
-/// Factorisé pour servir à la fois la bascule (`switcher`, cherche le compat) et
-/// le réglage d'angle (`range`, exige le natif).
 pub fn find_g27(api: &hidapi::HidApi, wanted: G27Mode) -> Result<DeviceInfo, Option<G27Mode>> {
     let mut other_g27: Option<G27Mode> = None;
 
