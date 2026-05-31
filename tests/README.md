@@ -3,9 +3,10 @@
 ## Tests unitaires (toujours actifs)
 
 La logique métier pure est couverte par des tests unitaires situés dans les
-modules (`src/hid.rs`, `src/report.rs`, `src/switcher.rs`, `src/range.rs`) :
-classification VID/PID, construction et validation des reports HID (bascule et
-réglage d'angle), rendu d'affichage. Ils ne nécessitent aucun matériel :
+modules (`src/hid.rs`, `src/report.rs`, `src/switcher.rs`, `src/range.rs`,
+`src/autocenter.rs`) : classification VID/PID, construction et validation des
+reports HID (bascule, réglage d'angle, désactivation de l'autocentrage), rendu
+d'affichage. Ils ne nécessitent aucun matériel :
 
 ```bash
 cargo test
@@ -59,10 +60,17 @@ cargo run -- status
 
 # Régler l'angle de rotation (mode natif requis), 40–900°
 cargo run -- set-range 540
+
+# Désactiver l'autocentrage matériel (mode natif requis)
+cargo run -- set-autocenter off
 ```
 
 > 🎯 Vérification de l'angle sous Windows : `joy.cpl` → propriétés du volant.
 > À 900°, une rotation complète correspond à **2,5 tours** de volant.
+>
+> 🎮 Vérification de l'autocentrage : dans un jeu avec FFB (ETS2, Forza…), le
+> volant ne doit **plus résister au centre** une fois l'autocentrage désactivé —
+> seul le retour de force du jeu agit.
 
 > ⚠️ La commande `switch` envoie réellement le magic packet : le volant se
 > déconnecte puis réapparaît en mode natif. C'est l'effet attendu, mais il
