@@ -3,10 +3,15 @@
 [![CI](https://github.com/Ezio-33/g27-mode-switcher/actions/workflows/ci.yml/badge.svg)](https://github.com/Ezio-33/g27-mode-switcher/actions/workflows/ci.yml)
 
 Bascule un volant **Logitech G27** de son mode dégradé par défaut vers son
-**mode natif** (900° de rotation, pédales séparées, retour de force complet),
+**mode natif** (900° de rotation, pédales séparées, axes complets),
 **sans installer Logitech Gaming Software (LGS) ni le moindre pilote noyau
 propriétaire** — donc **compatible avec HVCI / Memory Integrity** activé sur
 Windows 11.
+
+> ℹ️ La v0.2.0 débloque les **axes, l'angle et l'autocentrage** du mode natif,
+> mais **pas le retour de force dynamique des jeux** (qui requiert une couche
+> pilote) — voir [Retour de force (FFB)](#retour-de-force-ffb). Le FFB complet
+> est prévu pour la v0.3.0, sans désactiver HVCI.
 
 > **État : `v0.2.0` — nouvelle architecture HID native.**
 > L'outil parle au volant via l'**API HID native** du système (plus aucun
@@ -67,7 +72,7 @@ Le volant expose deux identités USB selon son mode :
 | Mode | Vendor ID | Product ID | Caractéristiques |
 | --- | --- | --- | --- |
 | Compatibilité (défaut) | `0x046D` | `0xC294` | 200°, FFB bridé |
-| Natif G27 (cible) | `0x046D` | `0xC29B` | 900°, pédales séparées, FFB complet |
+| Natif G27 (cible) | `0x046D` | `0xC29B` | 900°, pédales séparées, FFB matériel débridé |
 
 La bascule consiste à envoyer une **séquence de deux « magic packets »** : deux
 **HID output reports non numérotés** de 7 octets. Le format est repris, **à titre
@@ -305,6 +310,44 @@ g27-mode-switcher switch --disable-autocenter
 > pilote Linux `hid-lg4ff.c` : un report HID `[0xF5, 0x00, …]` (voir
 > [Références](#références)).
 
+## Retour de force (FFB)
+
+> ⚠️ **Limitation importante de la v0.2.0 : pas de FFB dynamique des jeux.**
+
+Le G27 communique son retour de force via un **protocole FFB propriétaire
+Logitech** (commandes spécifiques au-dessus du HID). En mode HID natif **sans
+pilote dédié**, voici ce qui fonctionne et ce qui ne fonctionne pas :
+
+| Fonctionnalité | En HID natif (v0.2.0) |
+| --- | --- |
+| Volant, pédales, boutons, boîte H | ✅ Oui |
+| Angle de rotation (`set-range`) | ✅ Oui |
+| Autocentrage matériel (`set-autocenter`) | ✅ Oui |
+| **FFB dynamique du jeu** (effets de route, perte d'adhérence, trottoirs…) | ❌ **Non** |
+
+Le FFB dynamique nécessite une **couche logicielle qui traduit les effets
+DirectInput du jeu en commandes FFB Logitech** — c'est exactement ce que faisait
+le pilote **LGS**. Sans cette couche, le firmware ne reçoit jamais les effets et
+le volant reste inerte côté FFB.
+
+L'**autocentrage matériel** (réglable via `set-autocenter`) fournit une **force
+de centrage basique** — utile pour ne pas avoir un volant mou — mais **ce n'est
+pas du vrai retour de force** : il ignore ce qui se passe dans le jeu.
+
+### En attendant : deux options pour le FFB
+
+1. **Logitech Gaming Software (LGS)** : restaure le FFB complet, **mais** installe
+   des composants noyau **incompatibles avec HVCI** — il faut alors **désactiver
+   Memory Integrity**, ce que ce projet cherche justement à éviter.
+2. **Attendre la v0.3.0** (voir [Feuille de route](#feuille-de-route)).
+
+### Ce que prévoit la v0.3.0
+
+Un **FFB complet en option**, sans LGS et **sans désactiver HVCI**, en s'appuyant
+sur **vJoy + HidHide** (pilotes **signés WHQL**, donc compatibles Memory
+Integrity) pour exposer un périphérique virtuel et router les effets FFB vers le
+G27. Objectif : retrouver un retour de force de jeu tout en restant HVCI-safe.
+
 ## Mapping natif du G27
 
 En mode natif, Windows expose le G27 comme une **manette de jeu HID** standard.
@@ -409,10 +452,11 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 10. ✅ `v0.2.0` : passage à l'API HID native (`hidapi`), suppression de Zadig,
     commandes `set-range` et `set-autocenter`, réglage automatique de l'angle à
     900° après bascule (autocentrage matériel laissé actif par défaut).
-11. 🔜 `v0.3.0` : **interface graphique**, **keymapper** (mapping des boutons du
-    G27 — notamment la boîte H — vers des touches clavier) pour les jeux qui ne
-    savent pas remapper la boîte H, et **réactivation paramétrable** de
-    l'autocentrage (`set-autocenter on` avec force réglable).
+11. 🔜 `v0.3.0` : **FFB dynamique complet** en option via **vJoy + HidHide**
+    (signés WHQL, donc **HVCI préservé**, sans LGS) ; **interface graphique** ;
+    **keymapper** (mapping des boutons du G27 — notamment la boîte H — vers des
+    touches clavier) pour les jeux qui ne savent pas remapper la boîte H ;
+    **réactivation paramétrable** de l'autocentrage (`set-autocenter on`).
 
 ## Références
 
