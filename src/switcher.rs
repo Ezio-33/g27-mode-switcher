@@ -137,13 +137,32 @@ pub fn switch_to_native_mode(
     apply_range: bool,
     disable_autocenter: bool,
 ) -> Result<SwitchOutcome, Error> {
+    let mut api = hidapi::HidApi::new().map_err(report::Error::from)?;
+    switch_with_api(&mut api, dry_run, apply_range, disable_autocenter)
+}
+
+/// Bascule en mode natif en réutilisant une instance [`hidapi::HidApi`] fournie.
+///
+/// Variante de [`switch_to_native_mode`] destinée aux appelants qui possèdent
+/// déjà un handle hidapi persistant (p. ex. la session temps réel de la GUI),
+/// afin de ne pas réinitialiser le sous-système HID à chaque opération.
+///
+/// # Errors
+///
+/// Identiques à [`switch_to_native_mode`] : [`Error::NoG27Found`],
+/// [`Error::AlreadyNative`] ou [`Error::Report`].
+pub fn switch_with_api(
+    api: &mut hidapi::HidApi,
+    dry_run: bool,
+    apply_range: bool,
+    disable_autocenter: bool,
+) -> Result<SwitchOutcome, Error> {
     let sequence = mode_switch_sequence();
     for command in &sequence {
         command.validate()?;
     }
 
-    let mut api = hidapi::HidApi::new().map_err(report::Error::from)?;
-    let info = find_compat_g27(&api)?;
+    let info = find_compat_g27(api)?;
 
     if dry_run {
         tracing::info!(
@@ -159,7 +178,7 @@ pub fn switch_to_native_mode(
     }
 
     report::send_reports(
-        &api,
+        api,
         &info,
         &sequence,
         Duration::from_millis(INTER_COMMAND_DELAY_MS),
@@ -169,7 +188,7 @@ pub fn switch_to_native_mode(
         sequence.len()
     );
 
-    let (range, autocenter) = apply_post_switch_settings(&mut api, apply_range, disable_autocenter);
+    let (range, autocenter) = apply_post_switch_settings(api, apply_range, disable_autocenter);
 
     Ok(SwitchOutcome {
         device: info,

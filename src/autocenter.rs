@@ -58,10 +58,23 @@ pub fn disable_autocenter_report() -> OutputReport {
 /// - [`Error::NotNative`] si le G27 est en mode compatibilité ;
 /// - [`Error::Report`] en cas d'échec d'initialisation hidapi ou d'envoi HID.
 pub fn disable_autocenter() -> Result<AutocenterOutcome, Error> {
-    let report = disable_autocenter_report();
     let api = hidapi::HidApi::new().map_err(report::Error::from)?;
-    let info = find_native_g27(&api)?;
-    report::send_reports(&api, &info, std::slice::from_ref(&report), Duration::ZERO)?;
+    disable_autocenter_with_api(&api)
+}
+
+/// Désactive l'autocentrage en réutilisant une instance [`hidapi::HidApi`].
+///
+/// Variante de [`disable_autocenter`] pour les appelants possédant déjà un
+/// handle hidapi persistant (session temps réel de la GUI).
+///
+/// # Errors
+///
+/// Identiques à [`disable_autocenter`] : [`Error::NoG27Found`],
+/// [`Error::NotNative`] ou [`Error::Report`].
+pub fn disable_autocenter_with_api(api: &hidapi::HidApi) -> Result<AutocenterOutcome, Error> {
+    let report = disable_autocenter_report();
+    let info = find_native_g27(api)?;
+    report::send_reports(api, &info, std::slice::from_ref(&report), Duration::ZERO)?;
     tracing::info!("autocentrage matériel désactivé");
     Ok(AutocenterOutcome { device: info })
 }

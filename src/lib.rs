@@ -7,6 +7,7 @@
 //! duplication entre les frontaux.
 
 pub mod autocenter;
+pub mod device;
 pub mod hid;
 pub mod range;
 pub mod report;
