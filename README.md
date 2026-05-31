@@ -25,6 +25,7 @@ Windows 11.
 - [Migration depuis la v0.1.0](#migration-depuis-la-v010)
 - [Utilisation](#utilisation)
 - [Réglage de l'angle de rotation](#réglage-de-langle-de-rotation)
+- [Autocentrage et retour de force](#autocentrage-et-retour-de-force)
 - [Mapping natif du G27](#mapping-natif-du-g27)
 - [Dépannage](#dépannage)
 - [Annexe : accès HID sous Linux (règle udev)](#annexe--accès-hid-sous-linux-règle-udev)
@@ -97,10 +98,14 @@ PID `0xC29B`. Windows lui applique alors **automatiquement son pilote manette de
 jeu HID natif** (signé Microsoft, sans composant Logitech) — donc **sans rien
 qui contrarie HVCI**.
 
-Une fois le volant réapparu en mode natif, l'outil lui envoie une **dernière
-commande HID** (dérivée de `lg4ff_set_range_g25`) pour régler l'**angle de
-rotation à 900°** — voir [Réglage de l'angle](#réglage-de-langle-de-rotation).
-Ce réglage automatique se désactive avec `--no-range`.
+Une fois le volant réapparu en mode natif, l'outil lui envoie deux **commandes
+HID** supplémentaires, comme le faisait LGS : régler l'**angle de rotation à
+900°** (dérivée de `lg4ff_set_range_g25`), puis **désactiver l'autocentrage
+matériel** (dérivée de `lg4ff_set_autocenter_default`) afin que le jeu gère
+l'intégralité du retour de force — voir
+[Réglage de l'angle](#réglage-de-langle-de-rotation) et
+[Autocentrage](#autocentrage-et-retour-de-force). Ces réglages automatiques se
+désactivent avec `--no-range` et `--no-autocenter`.
 
 > 💡 **Pourquoi pas de pilote USB brut (WinUSB) ?** Une approche USB raw type
 > WinUSB doit **déposséder** le pilote HID du volant. Or le firmware du G27 en
@@ -126,8 +131,9 @@ Ce réglage automatique se désactive avec `--no-range`.
 1. Récupérez `g27-mode-switcher.exe` (voir [Installation](#installation-de-loutil)).
 2. Branchez le G27.
 3. Vérifiez l'état : `g27-mode-switcher status`.
-4. Basculez : `g27-mode-switcher switch`. Le volant se reconnecte en mode natif
-   et son angle de rotation est réglé automatiquement sur **900°**.
+4. Basculez : `g27-mode-switcher switch`. Le volant se reconnecte en mode natif,
+   son angle de rotation est réglé sur **900°** et l'**autocentrage matériel est
+   désactivé** (pour laisser le jeu gérer le retour de force).
 
 C'est tout. Aucune étape d'installation de pilote.
 
@@ -214,17 +220,21 @@ g27-mode-switcher status
 # Lister tous les périphériques Logitech détectés
 g27-mode-switcher list
 
-# Basculer le volant en mode natif (règle aussi l'angle sur 900°)
+# Basculer le volant en mode natif (règle 900° + désactive l'autocentrage)
 g27-mode-switcher switch
 
-# Basculer sans régler automatiquement l'angle de rotation
+# Basculer sans régler l'angle, ou sans toucher à l'autocentrage
 g27-mode-switcher switch --no-range
+g27-mode-switcher switch --no-autocenter
 
 # Simuler la bascule sans rien envoyer au matériel
 g27-mode-switcher switch --dry-run
 
 # Régler l'angle de rotation (mode natif requis), de 40° à 900°
 g27-mode-switcher set-range 900
+
+# Désactiver l'autocentrage matériel (mode natif requis)
+g27-mode-switcher set-autocenter off
 
 # Logs détaillés (-v : debug, -vv : trace)
 g27-mode-switcher -v switch
@@ -261,6 +271,34 @@ g27-mode-switcher set-range 900   # camion / simulation (pleine échelle)
 > ℹ️ Beaucoup de jeux imposent leur propre angle de rotation. Le réglage de cet
 > outil sert de **valeur par défaut au niveau du firmware**, utile hors jeu ou
 > pour les titres qui respectent l'angle matériel.
+
+## Autocentrage et retour de force
+
+Le G27 embarque un **ressort de rappel au centre géré par son firmware**
+(« autocentrage matériel »). Sans Logitech Gaming Software, ce ressort **reste
+actif en mode natif** et **lutte contre le retour de force du jeu** : le volant
+résiste anormalement au centre, comme s'il était tiré vers la position neutre,
+en plus (et à contre-courant) des effets envoyés par le simulateur.
+
+LGS désactivait cet autocentrage au démarrage pour laisser le jeu gérer **100 %**
+du FFB. L'outil reproduit ce comportement : la commande `switch` **désactive
+automatiquement** l'autocentrage, et `set-autocenter` permet de le piloter
+manuellement.
+
+```bash
+g27-mode-switcher set-autocenter off   # désactive (recommandé pour jouer)
+```
+
+- La désactivation **exige le mode natif** (`0xC29B`) ; en mode compatibilité,
+  l'outil vous invite à lancer `switch` d'abord.
+- Le réglage **n'est pas persistant** : l'autocentrage matériel se réactive au
+  rebranchement du volant. La commande `switch` le redésactive à chaque bascule.
+- La **réactivation paramétrable** (`set-autocenter on` avec force réglable) est
+  prévue pour la **v0.3.0** ; en v0.2.0, `on` n'est pas encore implémenté.
+
+> 🔧 La commande dérive de `lg4ff_set_autocenter_default` (cas force nulle) du
+> pilote Linux `hid-lg4ff.c` : un report HID `[0xF5, 0x00, …]` (voir
+> [Références](#références)).
 
 ## Mapping natif du G27
 
@@ -364,18 +402,20 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 8. ✅ Documentation utilisateur.
 9. ✅ Première version `v0.1.0`.
 10. ✅ `v0.2.0` : passage à l'API HID native (`hidapi`), suppression de Zadig,
-    commande `set-range` et réglage automatique de l'angle à 900° après bascule.
-11. 🔜 `v0.3.0` : **interface graphique** et **keymapper** (mapping des boutons
-    du G27 — notamment la boîte H — vers des touches clavier) pour les jeux qui
-    ne savent pas remapper la boîte H.
+    commandes `set-range` et `set-autocenter`, et réglages automatiques après
+    bascule (angle 900° + désactivation de l'autocentrage matériel).
+11. 🔜 `v0.3.0` : **interface graphique**, **keymapper** (mapping des boutons du
+    G27 — notamment la boîte H — vers des touches clavier) pour les jeux qui ne
+    savent pas remapper la boîte H, et **réactivation paramétrable** de
+    l'autocentrage (`set-autocenter on` avec force réglable).
 
 ## Références
 
 - Noyau Linux — `drivers/hid/hid-lg4ff.c`
   (<https://github.com/torvalds/linux/blob/master/drivers/hid/hid-lg4ff.c>) :
-  utilisé **uniquement comme référence documentaire** du format des paquets de
-  bascule de mode. Aucun code source n'est copié ; le comportement est
-  réimplémenté en Rust.
+  utilisé **uniquement comme référence documentaire** du format des paquets HID
+  (bascule de mode, réglage de l'angle, désactivation de l'autocentrage). Aucun
+  code source n'est copié ; le comportement est réimplémenté en Rust.
 - Projet `lg4ff_userspace`
   (<https://github.com/Kethen/lg4ff_userspace>) : référence pour l'approche
   user-space.
