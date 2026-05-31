@@ -142,6 +142,32 @@ pub fn find_g27(api: &hidapi::HidApi, wanted: G27Mode) -> Result<DeviceInfo, Opt
     Err(other_g27)
 }
 
+/// Raison d'un échec de recherche d'un G27 en mode natif.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeLookup {
+    /// Un G27 est branché mais en mode compatibilité (`0xC294`).
+    NotNative,
+    /// Aucun G27 n'est branché.
+    NoG27,
+}
+
+/// Recherche un G27 en mode natif, en distinguant l'absence totale de volant
+/// d'un volant présent mais en mode compatibilité.
+///
+/// Mutualisé par les commandes qui n'opèrent qu'en mode natif (`set-range`,
+/// `set-autocenter`) afin d'émettre un message d'erreur cohérent.
+///
+/// # Errors
+///
+/// - [`NativeLookup::NotNative`] si un G27 est en mode compatibilité ;
+/// - [`NativeLookup::NoG27`] si aucun G27 n'est détecté.
+pub fn find_native_g27(api: &hidapi::HidApi) -> Result<DeviceInfo, NativeLookup> {
+    find_g27(api, G27Mode::Native).map_err(|other| match other {
+        Some(G27Mode::Compatibility) => NativeLookup::NotNative,
+        _ => NativeLookup::NoG27,
+    })
+}
+
 /// Énumère les périphériques HID Logitech actuellement connectés.
 ///
 /// L'opération lit uniquement les descripteurs d'énumération ; elle n'ouvre

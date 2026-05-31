@@ -12,7 +12,7 @@
 
 use std::time::Duration;
 
-use crate::hid::{self, G27Mode};
+use crate::hid;
 use crate::report::{self, OutputReport};
 
 /// En-tête de la commande de réglage d'angle (« set range »).
@@ -99,9 +99,9 @@ pub fn set_range(degrees: u16) -> Result<RangeOutcome, Error> {
 
 /// Recherche un G27 en mode natif dans l'énumération HID.
 fn find_native_g27(api: &hidapi::HidApi) -> Result<hid::DeviceInfo, Error> {
-    hid::find_g27(api, G27Mode::Native).map_err(|other| match other {
-        Some(G27Mode::Compatibility) => Error::NotNative,
-        _ => Error::NoG27Found,
+    hid::find_native_g27(api).map_err(|reason| match reason {
+        hid::NativeLookup::NotNative => Error::NotNative,
+        hid::NativeLookup::NoG27 => Error::NoG27Found,
     })
 }
 
