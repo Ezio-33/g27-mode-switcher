@@ -116,12 +116,16 @@ pub enum Error {
 ///
 /// En `dry_run`, la séquence est construite et validée, mais aucun octet n'est
 /// envoyé au matériel. Hors `dry_run`, une fois le volant réapparu en mode
-/// natif, l'outil applique — à l'image de LGS — les réglages demandés : d'abord
-/// l'angle de rotation à [`range::DEFAULT_RANGE_DEGREES`] (900°) si `apply_range`,
-/// puis la désactivation de l'autocentrage matériel si `disable_autocenter`. Si
-/// le volant ne réapparaît pas à temps, la bascule reste un succès et chaque
-/// réglage concerné est reporté comme « différé » ([`RangeStep::Deferred`],
-/// [`AutocenterStep::Deferred`]).
+/// natif, l'outil applique les réglages demandés : l'angle de rotation à
+/// [`range::DEFAULT_RANGE_DEGREES`] (900°) si `apply_range`, puis — uniquement
+/// si `disable_autocenter` — la désactivation de l'autocentrage matériel.
+///
+/// Par défaut, l'autocentrage matériel est **laissé actif** : sans FFB dynamique
+/// (indisponible en HID natif sans pilote), il constitue la seule force de
+/// centrage du volant. Le désactiver ne se justifie que si une couche FFB prend
+/// le relais. Si le volant ne réapparaît pas à temps, la bascule reste un succès
+/// et chaque réglage concerné est reporté comme « différé »
+/// ([`RangeStep::Deferred`], [`AutocenterStep::Deferred`]).
 ///
 /// # Errors
 ///
