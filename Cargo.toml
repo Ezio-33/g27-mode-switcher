@@ -1,12 +1,12 @@
 [package]
 name = "g27-mode-switcher"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive"] }
-rusb = "0.9.4"
+hidapi = "2.6"
 thiserror = "2.0.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
@@ -16,16 +16,10 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # Lancement : `cargo test --features hardware-tests`. Voir tests/README.md.
 hardware-tests = []
 
-# Cible Windows : on lie libusb statiquement (feature `vendored`) pour garantir
-# un .exe autonome, sans `libusb-1.0.dll` à fournir. Le build Linux natif
-# continue d'utiliser la libusb système (paquet `libusb-1.0-0-dev`).
-[target.'cfg(windows)'.dependencies]
-rusb = { version = "0.9.4", features = ["vendored"] }
-
 # Lints stricts : tout warning Clippy doit être traité (la CI lance
 # `cargo clippy ... -- -D warnings`). `unsafe_code` est signalé pour forcer
 # un `#[allow(unsafe_code)]` explicite + commentaire `// SAFETY:` au cas où
-# un appel libusb bas niveau le rendrait strictement nécessaire.
+# un appel FFI bas niveau le rendrait strictement nécessaire.
 [lints.rust]
 unsafe_code = "warn"
 

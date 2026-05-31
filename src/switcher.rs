@@ -1,251 +1,316 @@
-//! Construction et envoi du « magic packet » qui bascule le G27 en mode natif.
+//! Construction et envoi de la séquence de bascule du G27 en mode natif.
 //!
-//! Le format du transfert de contrôle est repris, à titre de référence
-//! documentaire uniquement, du pilote Linux `drivers/hid/hid-lg4ff.c`
-//! (aucune ligne de code n'est copiée ; le comportement est réimplémenté).
+//! La bascule consiste en **deux HID output reports non numérotés** de 7 octets,
+//! repris — à titre de **référence documentaire**, aucune ligne de code n'est
+//! copiée — du pilote Linux `drivers/hid/hid-lg4ff.c`
+//! (`lg4ff_mode_switch_ext09_g27`, `cmd_count = 2`) : « revert mode upon USB
+//! reset » puis « switch to G27 with detach ». Attention à ne pas confondre avec
+//! le G29 (`lg4ff_mode_switch_ext09_g29`), dont la 2ᵉ commande diffère
+//! (`0x05, 0x01, 0x01` au lieu de `0x04, 0x01, 0x00`).
+//!
+//! Côté USB bas niveau, le noyau émet ces commandes comme des requêtes
+//! `SET_REPORT` (classe HID). La représentation des reports et leur envoi sont
+//! factorisés dans le module [`crate::report`] ; l'énumération et la recherche
+//! du volant le sont dans [`crate::hid`].
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use crate::usb::{self, LOGITECH_VENDOR_ID};
+use crate::autocenter;
+use crate::hid::{self, G27Mode};
+use crate::range;
+use crate::report::{self, OutputReport};
 
-/// `bmRequestType` : Host-to-Device | Class | Interface.
-/// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c`.
-const REQUEST_TYPE: u8 = 0x21;
+/// Charge utile « revert mode upon USB reset » (1ʳᵉ commande de la séquence).
+/// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c` (`lg4ff_mode_switch_ext09_g27`).
+const MODE_SWITCH_REVERT_ON_RESET: [u8; report::COMMAND_LEN] =
+    [0xF8, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00];
 
-/// `bRequest` : `SET_REPORT` (classe HID).
-/// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c`.
-const REQUEST_SET_REPORT: u8 = 0x09;
+/// Charge utile « switch to G27 with detach » (2ᵉ commande de la séquence).
+/// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c` (`lg4ff_mode_switch_ext09_g27`).
+const MODE_SWITCH_TO_G27: [u8; report::COMMAND_LEN] = [0xF8, 0x09, 0x04, 0x01, 0x00, 0x00, 0x00];
 
-/// `wValue` : report de type Output (`0x02`) combiné au report ID 3 (`0x03`).
-/// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c`.
-const VALUE_OUTPUT_REPORT_3: u16 = 0x0203;
+/// Délai (en millisecondes) inséré entre les deux commandes de la séquence.
+///
+/// Le noyau Linux envoie les deux commandes d'affilée puis appelle
+/// `hid_hw_wait`, qui draine la file des output reports avant de rendre la main.
+/// En userspace via hidapi, `HidDevice::write` n'offre aucune garantie de
+/// synchronisation équivalente : on insère un court délai pour laisser le
+/// firmware traiter la 1ʳᵉ commande (revert-on-reset) avant d'émettre la 2ᵉ
+/// (switch + detach), qui déclenche la déconnexion/reconnexion USB.
+const INTER_COMMAND_DELAY_MS: u64 = 10;
 
-/// `wIndex` : interface 0.
-const INTERFACE_INDEX: u16 = 0x0000;
+/// Intervalle entre deux scrutations de l'énumération HID pendant l'attente de
+/// la reconnexion du volant en mode natif (millisecondes).
+const RECONNECT_POLL_INTERVAL_MS: u64 = 200;
 
-/// Numéro de l'interface USB à réclamer pour émettre le transfert.
-const INTERFACE_NUMBER: u8 = 0x00;
+/// Durée maximale d'attente de la réapparition du G27 en mode natif après la
+/// bascule, avant d'abandonner le réglage automatique de l'angle (millisecondes).
+const RECONNECT_TIMEOUT_MS: u64 = 6000;
 
-/// Octets du magic packet de bascule de mode.
-/// Réf. : noyau Linux `drivers/hid/hid-lg4ff.c`.
-const MODE_SWITCH_PAYLOAD: [u8; 7] = [0xF8, 0x09, 0x05, 0x01, 0x01, 0x00, 0x00];
-
-/// Délai maximal accordé au transfert de contrôle.
-const TRANSFER_TIMEOUT: Duration = Duration::from_secs(1);
-
-/// Bit de direction de `bmRequestType` (1 = Device-to-Host / IN).
-const DIRECTION_IN_MASK: u8 = 0x80;
-
-/// Paramètres d'un transfert de contrôle USB (requête `SET_REPORT`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ControlRequest {
-    /// `bmRequestType`.
-    pub request_type: u8,
-    /// `bRequest`.
-    pub request: u8,
-    /// `wValue`.
-    pub value: u16,
-    /// `wIndex`.
-    pub index: u16,
-    /// Charge utile (corps du report).
-    pub data: &'static [u8],
-}
-
-impl ControlRequest {
-    /// Valide le transfert avant tout envoi au matériel.
-    ///
-    /// # Errors
-    ///
-    /// Renvoie [`Error::InvalidRequest`] si la direction n'est pas
-    /// Host-to-Device (OUT) ou si la charge utile est vide.
-    pub fn validate(&self) -> Result<(), Error> {
-        if self.request_type & DIRECTION_IN_MASK != 0 {
-            return Err(Error::InvalidRequest(
-                "transfer direction must be host-to-device (out)",
-            ));
-        }
-        if self.data.is_empty() {
-            return Err(Error::InvalidRequest("report payload must not be empty"));
-        }
-        Ok(())
-    }
-}
-
-/// Construit le transfert de contrôle qui bascule le G27 en mode natif.
+/// Construit la séquence de bascule du G27 en mode natif.
+///
+/// Deux commandes successives, à l'image du noyau Linux
+/// (`lg4ff_mode_switch_ext09_g27`, `cmd_count = 2`) :
+/// 1. « revert mode upon USB reset » ;
+/// 2. « switch to G27 with detach » (déclenche la reconnexion).
 #[must_use]
-pub fn mode_switch_request() -> ControlRequest {
-    ControlRequest {
-        request_type: REQUEST_TYPE,
-        request: REQUEST_SET_REPORT,
-        value: VALUE_OUTPUT_REPORT_3,
-        index: INTERFACE_INDEX,
-        data: &MODE_SWITCH_PAYLOAD,
-    }
+pub fn mode_switch_sequence() -> [OutputReport; 2] {
+    [
+        OutputReport::unnumbered(MODE_SWITCH_REVERT_ON_RESET.to_vec()),
+        OutputReport::unnumbered(MODE_SWITCH_TO_G27.to_vec()),
+    ]
+}
+
+/// Issue du réglage automatique de l'angle de rotation après la bascule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RangeStep {
+    /// Réglage non tenté : simulation (`--dry-run`) ou option `--no-range`.
+    Skipped,
+    /// Angle réglé automatiquement à la valeur indiquée (degrés).
+    Applied(u16),
+    /// Bascule réussie, mais l'angle n'a pas pu être réglé automatiquement
+    /// (volant non réapparu à temps ou échec d'envoi) : à faire manuellement.
+    Deferred(u16),
+}
+
+/// Issue de la désactivation automatique de l'autocentrage après la bascule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutocenterStep {
+    /// Désactivation non tentée : simulation (`--dry-run`) ou `--no-autocenter`.
+    Skipped,
+    /// Autocentrage matériel désactivé automatiquement.
+    Disabled,
+    /// Bascule réussie, mais l'autocentrage n'a pas pu être désactivé
+    /// automatiquement (volant non réapparu à temps ou échec d'envoi).
+    Deferred,
 }
 
 /// Résultat d'une bascule réussie (ou simulée).
 #[derive(Debug, Clone)]
 pub struct SwitchOutcome {
     /// G27 ciblé, dans son état détecté avant la bascule (mode compatibilité).
-    pub device: usb::DeviceInfo,
+    pub device: hid::DeviceInfo,
     /// Vrai si l'envoi a été simulé (aucun octet réellement transmis).
     pub dry_run: bool,
+    /// Issue du réglage automatique de l'angle de rotation.
+    pub range: RangeStep,
+    /// Issue de la désactivation automatique de l'autocentrage.
+    pub autocenter: AutocenterStep,
 }
 
 /// Erreurs de la bascule de mode.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Échec d'une opération USB (ouverture, interface, transfert).
-    #[error("USB operation failed: {0}")]
-    Usb(#[from] rusb::Error),
+    /// Échec de construction ou d'envoi d'un report HID.
+    #[error(transparent)]
+    Report(#[from] report::Error),
     /// Aucun G27 n'a été trouvé.
     #[error("no Logitech G27 was found")]
     NoG27Found,
     /// Un G27 est présent mais déjà en mode natif.
     #[error("a G27 was found but is already in native mode")]
     AlreadyNative,
-    /// Le transfert construit est invalide.
-    #[error("invalid control request: {0}")]
-    InvalidRequest(&'static str),
 }
 
 /// Bascule le premier G27 détecté en mode compatibilité vers le mode natif.
 ///
-/// En `dry_run`, le transfert est construit et validé, mais aucun octet n'est
-/// envoyé au matériel.
+/// En `dry_run`, la séquence est construite et validée, mais aucun octet n'est
+/// envoyé au matériel. Hors `dry_run`, une fois le volant réapparu en mode
+/// natif, l'outil applique les réglages demandés : l'angle de rotation à
+/// [`range::DEFAULT_RANGE_DEGREES`] (900°) si `apply_range`, puis — uniquement
+/// si `disable_autocenter` — la désactivation de l'autocentrage matériel.
+///
+/// Par défaut, l'autocentrage matériel est **laissé actif** : sans FFB dynamique
+/// (indisponible en HID natif sans pilote), il constitue la seule force de
+/// centrage du volant. Le désactiver ne se justifie que si une couche FFB prend
+/// le relais. Si le volant ne réapparaît pas à temps, la bascule reste un succès
+/// et chaque réglage concerné est reporté comme « différé »
+/// ([`RangeStep::Deferred`], [`AutocenterStep::Deferred`]).
 ///
 /// # Errors
 ///
 /// - [`Error::NoG27Found`] ou [`Error::AlreadyNative`] selon l'état détecté ;
-/// - [`Error::InvalidRequest`] si le transfert construit est invalide ;
-/// - [`Error::Usb`] en cas d'échec d'ouverture, de réclamation d'interface ou
-///   d'envoi du transfert de contrôle.
-pub fn switch_to_native_mode(dry_run: bool) -> Result<SwitchOutcome, Error> {
-    let request = mode_switch_request();
-    request.validate()?;
+/// - [`Error::Report`] si une commande est invalide ou si l'envoi HID échoue
+///   (initialisation hidapi, ouverture du périphérique, écriture).
+pub fn switch_to_native_mode(
+    dry_run: bool,
+    apply_range: bool,
+    disable_autocenter: bool,
+) -> Result<SwitchOutcome, Error> {
+    let sequence = mode_switch_sequence();
+    for command in &sequence {
+        command.validate()?;
+    }
 
-    let (device, info) = find_compat_g27()?;
+    let mut api = hidapi::HidApi::new().map_err(report::Error::from)?;
+    let info = find_compat_g27(&api)?;
 
     if dry_run {
-        tracing::info!("simulation : magic packet construit et validé, aucun octet envoyé");
+        tracing::info!(
+            "simulation : séquence de {} commandes construite et validée, aucun octet envoyé",
+            sequence.len()
+        );
         return Ok(SwitchOutcome {
             device: info,
             dry_run: true,
+            range: RangeStep::Skipped,
+            autocenter: AutocenterStep::Skipped,
         });
     }
 
-    send_control(&device, &request)?;
+    report::send_reports(
+        &api,
+        &info,
+        &sequence,
+        Duration::from_millis(INTER_COMMAND_DELAY_MS),
+    )?;
+    tracing::info!(
+        "séquence de bascule envoyée ({} commandes) ; le G27 va se reconnecter",
+        sequence.len()
+    );
+
+    let (range, autocenter) = apply_post_switch_settings(&mut api, apply_range, disable_autocenter);
+
     Ok(SwitchOutcome {
         device: info,
         dry_run: false,
+        range,
+        autocenter,
     })
 }
 
-/// Recherche un G27 en mode compatibilité et renvoie son périphérique ouvrable.
-fn find_compat_g27() -> Result<(rusb::Device<rusb::GlobalContext>, usb::DeviceInfo), Error> {
-    let mut native_seen = false;
+/// Recherche un G27 en mode compatibilité dans l'énumération HID.
+fn find_compat_g27(api: &hidapi::HidApi) -> Result<hid::DeviceInfo, Error> {
+    hid::find_g27(api, G27Mode::Compatibility).map_err(|other| match other {
+        Some(G27Mode::Native) => Error::AlreadyNative,
+        _ => Error::NoG27Found,
+    })
+}
 
-    for device in rusb::devices()?.iter() {
-        let descriptor = device.device_descriptor()?;
-        if descriptor.vendor_id() != LOGITECH_VENDOR_ID {
-            continue;
-        }
-
-        let product_id = descriptor.product_id();
-        match usb::classify_product_id(product_id) {
-            usb::G27Mode::Compatibility => {
-                let info = usb::DeviceInfo {
-                    vendor_id: descriptor.vendor_id(),
-                    product_id,
-                    bus_number: device.bus_number(),
-                    address: device.address(),
-                    mode: usb::G27Mode::Compatibility,
-                };
-                return Ok((device, info));
-            }
-            usb::G27Mode::Native => native_seen = true,
-            usb::G27Mode::Other => {}
-        }
+/// Attend la réapparition du G27 en mode natif (après le detach/reconnect) puis
+/// applique les réglages demandés, dans l'ordre de LGS : angle de rotation par
+/// défaut, puis désactivation de l'autocentrage matériel.
+///
+/// Ne renvoie jamais d'erreur : la bascule ayant déjà eu lieu, tout échec (ou un
+/// volant qui tarde à réapparaître) est tracé et reporté comme « différé », afin
+/// que l'utilisateur rejoue le réglage manquant via `set-range` / `set-autocenter`.
+fn apply_post_switch_settings(
+    api: &mut hidapi::HidApi,
+    apply_range: bool,
+    disable_autocenter: bool,
+) -> (RangeStep, AutocenterStep) {
+    if !apply_range && !disable_autocenter {
+        return (RangeStep::Skipped, AutocenterStep::Skipped);
     }
 
-    if native_seen {
-        Err(Error::AlreadyNative)
+    let degrees = range::DEFAULT_RANGE_DEGREES;
+    let Some(native) = wait_for_native_g27(api) else {
+        tracing::warn!("le G27 n'est pas réapparu en mode natif à temps ; réglages différés");
+        return (
+            if apply_range {
+                RangeStep::Deferred(degrees)
+            } else {
+                RangeStep::Skipped
+            },
+            if disable_autocenter {
+                AutocenterStep::Deferred
+            } else {
+                AutocenterStep::Skipped
+            },
+        );
+    };
+
+    let range_step = if apply_range {
+        match send_default_range(api, &native, degrees) {
+            Ok(()) => RangeStep::Applied(degrees),
+            Err(error) => {
+                tracing::warn!("réglage automatique de l'angle échoué : {error} ; différé");
+                RangeStep::Deferred(degrees)
+            }
+        }
     } else {
-        Err(Error::NoG27Found)
+        RangeStep::Skipped
+    };
+
+    let autocenter_step = if disable_autocenter {
+        let report = autocenter::disable_autocenter_report();
+        match report::send_reports(api, &native, std::slice::from_ref(&report), Duration::ZERO) {
+            Ok(()) => AutocenterStep::Disabled,
+            Err(error) => {
+                tracing::warn!(
+                    "désactivation automatique de l'autocentrage échouée : {error} ; différée"
+                );
+                AutocenterStep::Deferred
+            }
+        }
+    } else {
+        AutocenterStep::Skipped
+    };
+
+    (range_step, autocenter_step)
+}
+
+/// Scrute l'énumération HID jusqu'à voir le G27 en mode natif, ou jusqu'au
+/// délai [`RECONNECT_TIMEOUT_MS`].
+fn wait_for_native_g27(api: &mut hidapi::HidApi) -> Option<hid::DeviceInfo> {
+    let deadline = Instant::now() + Duration::from_millis(RECONNECT_TIMEOUT_MS);
+    loop {
+        if let Err(error) = api.refresh_devices() {
+            tracing::debug!("re-énumération HID impossible : {error}");
+        } else if let Ok(native) = hid::find_g27(api, G27Mode::Native) {
+            return Some(native);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(RECONNECT_POLL_INTERVAL_MS));
     }
 }
 
-/// Ouvre le périphérique et émet le transfert de contrôle de bascule.
-fn send_control(
-    device: &rusb::Device<rusb::GlobalContext>,
-    request: &ControlRequest,
-) -> Result<(), Error> {
-    let handle = device.open()?;
-
-    // Sous Linux, le pilote noyau usbhid peut être attaché à l'interface : on
-    // tente de le détacher automatiquement. Non supporté sous Windows (où
-    // WinUSB est déjà en place) ; l'échec est ignoré volontairement.
-    if let Err(error) = handle.set_auto_detach_kernel_driver(true) {
-        tracing::debug!(%error, "détachement auto du pilote noyau indisponible");
-    }
-
-    handle.claim_interface(INTERFACE_NUMBER)?;
-
-    let written = handle.write_control(
-        request.request_type,
-        request.request,
-        request.value,
-        request.index,
-        request.data,
-        TRANSFER_TIMEOUT,
-    )?;
-
-    tracing::info!("magic packet envoyé ({written} octets) ; le G27 va se reconnecter");
-
-    // Le périphérique se réinitialise : la libération peut échouer (device déjà
-    // parti), ce qui n'est pas une erreur.
-    let _ = handle.release_interface(INTERFACE_NUMBER);
-
-    Ok(())
+/// Construit et envoie la commande de réglage d'angle par défaut sur le volant
+/// natif fraîchement reconnecté.
+fn send_default_range(
+    api: &hidapi::HidApi,
+    native: &hid::DeviceInfo,
+    degrees: u16,
+) -> Result<(), report::Error> {
+    let report = range::set_range_report(degrees)
+        .map_err(|_| report::Error::InvalidReport("default range out of bounds"))?;
+    report::send_reports(api, native, std::slice::from_ref(&report), Duration::ZERO)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ControlRequest, Error, mode_switch_request};
+    use super::mode_switch_sequence;
 
     #[test]
-    fn builds_expected_magic_packet() {
-        let request = mode_switch_request();
-        assert_eq!(request.request_type, 0x21);
-        assert_eq!(request.request, 0x09);
-        assert_eq!(request.value, 0x0203);
-        assert_eq!(request.index, 0x0000);
+    fn sequence_has_two_commands() {
+        assert_eq!(mode_switch_sequence().len(), 2);
+    }
+
+    #[test]
+    fn first_command_reverts_on_reset() {
+        // Préfixe 0x00 (« pas de report ID ») + revert-on-reset.
         assert_eq!(
-            request.data,
-            [0xF8u8, 0x09, 0x05, 0x01, 0x01, 0x00, 0x00].as_slice()
+            mode_switch_sequence()[0].to_buffer(),
+            vec![0x00u8, 0xF8, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00]
         );
     }
 
     #[test]
-    fn default_request_is_valid() {
-        assert!(mode_switch_request().validate().is_ok());
+    fn second_command_switches_to_g27() {
+        // Payload G27 (et non G29 : 0x04, pas 0x05/0x01/0x01), sans report ID.
+        assert_eq!(
+            mode_switch_sequence()[1].to_buffer(),
+            vec![0x00u8, 0xF8, 0x09, 0x04, 0x01, 0x00, 0x00, 0x00]
+        );
     }
 
     #[test]
-    fn rejects_in_direction() {
-        let request = ControlRequest {
-            request_type: 0xA1,
-            ..mode_switch_request()
-        };
-        assert!(matches!(request.validate(), Err(Error::InvalidRequest(_))));
-    }
-
-    #[test]
-    fn rejects_empty_payload() {
-        let request = ControlRequest {
-            data: &[],
-            ..mode_switch_request()
-        };
-        assert!(matches!(request.validate(), Err(Error::InvalidRequest(_))));
+    fn all_commands_use_no_report_id_and_are_valid() {
+        for command in mode_switch_sequence() {
+            assert_eq!(command.report_id, 0x00);
+            assert!(command.validate().is_ok());
+        }
     }
 }
