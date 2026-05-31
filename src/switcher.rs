@@ -15,6 +15,7 @@
 
 use std::time::{Duration, Instant};
 
+use crate::autocenter;
 use crate::hid::{self, G27Mode};
 use crate::range;
 use crate::report::{self, OutputReport};
@@ -72,6 +73,18 @@ pub enum RangeStep {
     Deferred(u16),
 }
 
+/// Issue de la désactivation automatique de l'autocentrage après la bascule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutocenterStep {
+    /// Désactivation non tentée : simulation (`--dry-run`) ou `--no-autocenter`.
+    Skipped,
+    /// Autocentrage matériel désactivé automatiquement.
+    Disabled,
+    /// Bascule réussie, mais l'autocentrage n'a pas pu être désactivé
+    /// automatiquement (volant non réapparu à temps ou échec d'envoi).
+    Deferred,
+}
+
 /// Résultat d'une bascule réussie (ou simulée).
 #[derive(Debug, Clone)]
 pub struct SwitchOutcome {
@@ -81,6 +94,8 @@ pub struct SwitchOutcome {
     pub dry_run: bool,
     /// Issue du réglage automatique de l'angle de rotation.
     pub range: RangeStep,
+    /// Issue de la désactivation automatique de l'autocentrage.
+    pub autocenter: AutocenterStep,
 }
 
 /// Erreurs de la bascule de mode.
@@ -100,18 +115,24 @@ pub enum Error {
 /// Bascule le premier G27 détecté en mode compatibilité vers le mode natif.
 ///
 /// En `dry_run`, la séquence est construite et validée, mais aucun octet n'est
-/// envoyé au matériel. Lorsque `apply_range` est vrai (et hors `dry_run`), une
-/// fois le volant réapparu en mode natif, son angle de rotation est réglé
-/// automatiquement à [`range::DEFAULT_RANGE_DEGREES`] (900°). Si le volant ne
-/// réapparaît pas à temps, la bascule reste un succès et l'issue indique un
-/// réglage différé ([`RangeStep::Deferred`]).
+/// envoyé au matériel. Hors `dry_run`, une fois le volant réapparu en mode
+/// natif, l'outil applique — à l'image de LGS — les réglages demandés : d'abord
+/// l'angle de rotation à [`range::DEFAULT_RANGE_DEGREES`] (900°) si `apply_range`,
+/// puis la désactivation de l'autocentrage matériel si `disable_autocenter`. Si
+/// le volant ne réapparaît pas à temps, la bascule reste un succès et chaque
+/// réglage concerné est reporté comme « différé » ([`RangeStep::Deferred`],
+/// [`AutocenterStep::Deferred`]).
 ///
 /// # Errors
 ///
 /// - [`Error::NoG27Found`] ou [`Error::AlreadyNative`] selon l'état détecté ;
 /// - [`Error::Report`] si une commande est invalide ou si l'envoi HID échoue
 ///   (initialisation hidapi, ouverture du périphérique, écriture).
-pub fn switch_to_native_mode(dry_run: bool, apply_range: bool) -> Result<SwitchOutcome, Error> {
+pub fn switch_to_native_mode(
+    dry_run: bool,
+    apply_range: bool,
+    disable_autocenter: bool,
+) -> Result<SwitchOutcome, Error> {
     let sequence = mode_switch_sequence();
     for command in &sequence {
         command.validate()?;
@@ -129,6 +150,7 @@ pub fn switch_to_native_mode(dry_run: bool, apply_range: bool) -> Result<SwitchO
             device: info,
             dry_run: true,
             range: RangeStep::Skipped,
+            autocenter: AutocenterStep::Skipped,
         });
     }
 
@@ -143,16 +165,13 @@ pub fn switch_to_native_mode(dry_run: bool, apply_range: bool) -> Result<SwitchO
         sequence.len()
     );
 
-    let range = if apply_range {
-        apply_default_range(&mut api)
-    } else {
-        RangeStep::Skipped
-    };
+    let (range, autocenter) = apply_post_switch_settings(&mut api, apply_range, disable_autocenter);
 
     Ok(SwitchOutcome {
         device: info,
         dry_run: false,
         range,
+        autocenter,
     })
 }
 
@@ -165,25 +184,66 @@ fn find_compat_g27(api: &hidapi::HidApi) -> Result<hid::DeviceInfo, Error> {
 }
 
 /// Attend la réapparition du G27 en mode natif (après le detach/reconnect) puis
-/// lui applique l'angle de rotation par défaut.
+/// applique les réglages demandés, dans l'ordre de LGS : angle de rotation par
+/// défaut, puis désactivation de l'autocentrage matériel.
 ///
-/// Ne renvoie jamais d'erreur : la bascule ayant déjà eu lieu, tout échec de
-/// réglage est tracé et reporté comme [`RangeStep::Deferred`] afin que
-/// l'utilisateur le rejoue manuellement via `set-range`.
-fn apply_default_range(api: &mut hidapi::HidApi) -> RangeStep {
+/// Ne renvoie jamais d'erreur : la bascule ayant déjà eu lieu, tout échec (ou un
+/// volant qui tarde à réapparaître) est tracé et reporté comme « différé », afin
+/// que l'utilisateur rejoue le réglage manquant via `set-range` / `set-autocenter`.
+fn apply_post_switch_settings(
+    api: &mut hidapi::HidApi,
+    apply_range: bool,
+    disable_autocenter: bool,
+) -> (RangeStep, AutocenterStep) {
+    if !apply_range && !disable_autocenter {
+        return (RangeStep::Skipped, AutocenterStep::Skipped);
+    }
+
     let degrees = range::DEFAULT_RANGE_DEGREES;
     let Some(native) = wait_for_native_g27(api) else {
-        tracing::warn!("le G27 n'est pas réapparu en mode natif à temps ; réglage d'angle différé");
-        return RangeStep::Deferred(degrees);
+        tracing::warn!("le G27 n'est pas réapparu en mode natif à temps ; réglages différés");
+        return (
+            if apply_range {
+                RangeStep::Deferred(degrees)
+            } else {
+                RangeStep::Skipped
+            },
+            if disable_autocenter {
+                AutocenterStep::Deferred
+            } else {
+                AutocenterStep::Skipped
+            },
+        );
     };
 
-    match send_default_range(api, &native, degrees) {
-        Ok(()) => RangeStep::Applied(degrees),
-        Err(error) => {
-            tracing::warn!("réglage automatique de l'angle échoué : {error} ; réglage différé");
-            RangeStep::Deferred(degrees)
+    let range_step = if apply_range {
+        match send_default_range(api, &native, degrees) {
+            Ok(()) => RangeStep::Applied(degrees),
+            Err(error) => {
+                tracing::warn!("réglage automatique de l'angle échoué : {error} ; différé");
+                RangeStep::Deferred(degrees)
+            }
         }
-    }
+    } else {
+        RangeStep::Skipped
+    };
+
+    let autocenter_step = if disable_autocenter {
+        let report = autocenter::disable_autocenter_report();
+        match report::send_reports(api, &native, std::slice::from_ref(&report), Duration::ZERO) {
+            Ok(()) => AutocenterStep::Disabled,
+            Err(error) => {
+                tracing::warn!(
+                    "désactivation automatique de l'autocentrage échouée : {error} ; différée"
+                );
+                AutocenterStep::Deferred
+            }
+        }
+    } else {
+        AutocenterStep::Skipped
+    };
+
+    (range_step, autocenter_step)
 }
 
 /// Scrute l'énumération HID jusqu'à voir le G27 en mode natif, ou jusqu'au

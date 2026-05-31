@@ -31,6 +31,9 @@ enum Command {
         /// Ne règle pas automatiquement l'angle à 900° après la bascule.
         #[arg(long)]
         no_range: bool,
+        /// Ne désactive pas automatiquement l'autocentrage après la bascule.
+        #[arg(long)]
+        no_autocenter: bool,
     },
     /// Affiche le mode courant du G27 détecté.
     Status,
@@ -61,7 +64,11 @@ impl Cli {
     pub fn run(self) -> ExitCode {
         match self.command {
             Command::List => run_list(),
-            Command::Switch { dry_run, no_range } => run_switch(dry_run, no_range),
+            Command::Switch {
+                dry_run,
+                no_range,
+                no_autocenter,
+            } => run_switch(dry_run, no_range, no_autocenter),
             Command::Status => run_status(),
             Command::SetRange { degrees } => run_set_range(degrees),
             Command::SetAutocenter { state } => run_set_autocenter(state),
@@ -96,7 +103,7 @@ fn run_list() -> ExitCode {
 }
 
 /// Bascule un G27 en mode natif (ou simule l'opération en `--dry-run`).
-fn run_switch(dry_run: bool, no_range: bool) -> ExitCode {
+fn run_switch(dry_run: bool, no_range: bool, no_autocenter: bool) -> ExitCode {
     if dry_run {
         println!("Simulation (--dry-run) : aucune donnée ne sera envoyée au volant.");
     } else {
@@ -104,7 +111,7 @@ fn run_switch(dry_run: bool, no_range: bool) -> ExitCode {
         println!("Le volant va se déconnecter puis se reconnecter automatiquement.");
     }
 
-    match switcher::switch_to_native_mode(dry_run, !no_range) {
+    match switcher::switch_to_native_mode(dry_run, !no_range, !no_autocenter) {
         Ok(outcome) if outcome.dry_run => {
             println!("Simulation OK : G27 éligible détecté → {}", outcome.device);
             ExitCode::SUCCESS
@@ -115,6 +122,7 @@ fn run_switch(dry_run: bool, no_range: bool) -> ExitCode {
                 outcome.device
             );
             report_range_step(outcome.range);
+            report_autocenter_step(outcome.autocenter);
             ExitCode::SUCCESS
         }
         Err(switcher::Error::NoG27Found) => {
@@ -142,6 +150,21 @@ fn report_range_step(step: switcher::RangeStep) {
         switcher::RangeStep::Deferred(degrees) => {
             println!(
                 "Bascule réussie, mais l'angle n'a pas pu être réglé automatiquement. Une fois le volant reconnecté, lancez : set-range {degrees}"
+            );
+        }
+    }
+}
+
+/// Affiche à l'utilisateur l'issue de la désactivation automatique de l'autocentrage.
+fn report_autocenter_step(step: switcher::AutocenterStep) {
+    match step {
+        switcher::AutocenterStep::Skipped => {}
+        switcher::AutocenterStep::Disabled => {
+            println!("Autocentrage matériel désactivé (le jeu gère 100 % du retour de force).");
+        }
+        switcher::AutocenterStep::Deferred => {
+            println!(
+                "Bascule réussie, mais l'autocentrage n'a pas pu être désactivé automatiquement. Une fois le volant reconnecté, lancez : set-autocenter off"
             );
         }
     }
