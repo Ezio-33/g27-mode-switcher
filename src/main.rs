@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Samuel.V (Ezio_33) — https://la-confrerie-des-ombres.vercel.app
+
 //! Point d'entrée du G27 Mode Switcher.
 
 mod cli;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Samuel.V (Ezio_33) — https://la-confrerie-des-ombres.vercel.app
+
 //! Cœur réutilisable du G27 Mode Switcher.
 //!
 //! Cette bibliothèque regroupe toute la logique métier indépendante de

@@ -469,9 +469,23 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
   (<https://github.com/Kethen/lg4ff_userspace>) : référence pour l'approche
   user-space.
 
+## Crédits / Auteur
+
+Projet créé et maintenu par **Samuel.V** — *Ezio_33*.
+
+- 🌐 Site : <https://la-confrerie-des-ombres.vercel.app>
+- 💬 Discord : <https://discord.gg/zckGmdg>
+- ❤️ Soutenir : <https://streamelements.com/ezio_33/tip>
+
+Si cet outil vous est utile, un passage sur le site ou le Discord fait toujours
+plaisir. Merci de **conserver l'attribution** (auteur + lien) en cas de
+réutilisation — c'est ce que demande la clause de notice de la licence MIT.
+
 ## Licence
 
-Distribué sous licence **MIT**. Voir le fichier [LICENSE](LICENSE).
+Distribué sous licence **MIT** — voir [`LICENSE`](LICENSE) (version anglaise
+canonique, **seule juridiquement valable**). Une traduction française
+**indicative** est disponible dans [`LICENSE.fr.md`](LICENSE.fr.md).
 
 S'inspirer du comportement *documenté* du noyau Linux (GPL-2.0) sans en copier
 le code n'entraîne pas de contamination GPL.
