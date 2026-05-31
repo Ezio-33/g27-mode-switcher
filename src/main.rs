@@ -4,6 +4,7 @@
 //! Point d'entrée du G27 Mode Switcher.
 
 mod cli;
+mod gui;
 
 use std::process::ExitCode;
 

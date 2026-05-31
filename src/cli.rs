@@ -14,12 +14,13 @@ pub struct Cli {
     #[arg(short, long, action = ArgAction::Count, global = true)]
     pub verbose: u8,
 
+    /// Sans sous-commande, l'application lance son interface graphique.
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 /// Sous-commandes disponibles.
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Copy, Subcommand)]
 enum Command {
     /// Liste les périphériques Logitech détectés.
     List,
@@ -59,19 +60,38 @@ enum AutocenterState {
 }
 
 impl Cli {
-    /// Exécute la sous-commande sélectionnée et renvoie le code de sortie.
+    /// Exécute la sous-commande choisie, ou lance la GUI si aucune n'est fournie.
     #[must_use]
     pub fn run(self) -> ExitCode {
         match self.command {
-            Command::List => run_list(),
-            Command::Switch {
-                dry_run,
-                no_range,
-                disable_autocenter,
-            } => run_switch(dry_run, no_range, disable_autocenter),
-            Command::Status => run_status(),
-            Command::SetRange { degrees } => run_set_range(degrees),
-            Command::SetAutocenter { state } => run_set_autocenter(state),
+            Some(command) => dispatch(command),
+            None => run_gui(),
+        }
+    }
+}
+
+/// Exécute une sous-commande CLI et renvoie son code de sortie.
+fn dispatch(command: Command) -> ExitCode {
+    match command {
+        Command::List => run_list(),
+        Command::Switch {
+            dry_run,
+            no_range,
+            disable_autocenter,
+        } => run_switch(dry_run, no_range, disable_autocenter),
+        Command::Status => run_status(),
+        Command::SetRange { degrees } => run_set_range(degrees),
+        Command::SetAutocenter { state } => run_set_autocenter(state),
+    }
+}
+
+/// Lance l'interface graphique (mode par défaut).
+fn run_gui() -> ExitCode {
+    match crate::gui::run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Erreur de l'interface graphique : {error}");
+            ExitCode::FAILURE
         }
     }
 }

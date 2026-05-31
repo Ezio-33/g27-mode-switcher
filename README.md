@@ -487,5 +487,9 @@ Distribué sous licence **MIT** — voir [`LICENSE`](LICENSE) (version anglaise
 canonique, **seule juridiquement valable**). Une traduction française
 **indicative** est disponible dans [`LICENSE.fr.md`](LICENSE.fr.md).
 
+La police **Cinzel** embarquée dans l'interface graphique (titres) est
+distribuée sous **SIL Open Font License 1.1** — voir
+[`assets/fonts/OFL.txt`](assets/fonts/OFL.txt).
+
 S'inspirer du comportement *documenté* du noyau Linux (GPL-2.0) sans en copier
 le code n'entraîne pas de contamination GPL.

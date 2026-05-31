@@ -6,6 +6,10 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive"] }
+# eframe sans wgpu : on ne garde que le backend glow (OpenGL) pour rester léger
+# et garder un .exe autonome (DLL système uniquement). `default_fonts` fournit
+# les polices de corps par défaut d'egui (Cinzel est embarqué en plus).
+eframe = { version = "0.34", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
 hidapi = "2.6"
 thiserror = "2.0.18"
 tracing = "0.1.44"
