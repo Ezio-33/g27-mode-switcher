@@ -3,9 +3,10 @@
 ## Tests unitaires (toujours actifs)
 
 La logique métier pure est couverte par des tests unitaires situés dans les
-modules (`src/usb.rs`, `src/switcher.rs`) : classification VID/PID,
-construction du magic packet, validation stricte du transfert de contrôle,
-rendu d'affichage. Ils ne nécessitent aucun matériel :
+modules (`src/hid.rs`, `src/report.rs`, `src/switcher.rs`, `src/range.rs`,
+`src/autocenter.rs`) : classification VID/PID, construction et validation des
+reports HID (bascule, réglage d'angle, désactivation de l'autocentrage), rendu
+d'affichage. Ils ne nécessitent aucun matériel :
 
 ```bash
 cargo test
@@ -21,11 +22,10 @@ machine sans volant.
 ### Prérequis
 
 - Un **G27 branché** en USB.
-- **Accès USB au périphérique** :
-  - **Windows** : pilote **WinUSB** posé sur l'interface du G27 via
-    [Zadig](https://zadig.akeo.ie/) (voir le `README.md` racine).
-  - **Linux** : droits suffisants pour ouvrir le périphérique (règle `udev`
-    dédiée, ou exécution privilégiée selon la configuration).
+- **Accès HID au périphérique** :
+  - **Windows** : aucun pilote tiers à installer — le pilote HID natif suffit.
+  - **Linux** : accès `hidraw` (règle `udev` dédiée, voir l'annexe du `README.md`
+    racine, ou exécution privilégiée selon la configuration).
 
 ### Lancement
 
@@ -37,7 +37,7 @@ cargo test --features hardware-tests
 
 | Test | Vérifie | Effet matériel |
 | --- | --- | --- |
-| `usb::hardware_tests::detects_a_connected_g27` | Le G27 est bien énuméré et reconnu | Lecture seule (aucun écrit) |
+| `hid::hardware_tests::detects_a_connected_g27` | Le G27 est bien énuméré et reconnu | Lecture seule (aucun écrit) |
 
 ### Vérifié manuellement (non automatisé)
 
@@ -52,12 +52,25 @@ cargo run -- status
 # Simulation (n'envoie rien)
 cargo run -- switch --dry-run
 
-# Bascule réelle vers le mode natif
+# Bascule réelle vers le mode natif (règle aussi l'angle sur 900°)
 cargo run -- switch
 
 # Vérifier que le mode a changé
 cargo run -- status
+
+# Régler l'angle de rotation (mode natif requis), 40–900°
+cargo run -- set-range 540
+
+# Désactiver l'autocentrage matériel (mode natif requis)
+cargo run -- set-autocenter off
 ```
+
+> 🎯 Vérification de l'angle sous Windows : `joy.cpl` → propriétés du volant.
+> À 900°, une rotation complète correspond à **2,5 tours** de volant.
+>
+> 🎮 Vérification de l'autocentrage : dans un jeu avec FFB (ETS2, Forza…), le
+> volant ne doit **plus résister au centre** une fois l'autocentrage désactivé —
+> seul le retour de force du jeu agit.
 
 > ⚠️ La commande `switch` envoie réellement le magic packet : le volant se
 > déconnecte puis réapparaît en mode natif. C'est l'effet attendu, mais il

@@ -1,8 +1,11 @@
 //! Point d'entrée du G27 Mode Switcher.
 
+mod autocenter;
 mod cli;
+mod hid;
+mod range;
+mod report;
 mod switcher;
-mod usb;
 
 use std::process::ExitCode;
 
