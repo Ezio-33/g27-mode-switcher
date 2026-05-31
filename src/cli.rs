@@ -31,9 +31,9 @@ enum Command {
         /// Ne règle pas automatiquement l'angle à 900° après la bascule.
         #[arg(long)]
         no_range: bool,
-        /// Ne désactive pas automatiquement l'autocentrage après la bascule.
+        /// Désactive l'autocentrage matériel après la bascule (laissé actif par défaut).
         #[arg(long)]
-        no_autocenter: bool,
+        disable_autocenter: bool,
     },
     /// Affiche le mode courant du G27 détecté.
     Status,
@@ -67,8 +67,8 @@ impl Cli {
             Command::Switch {
                 dry_run,
                 no_range,
-                no_autocenter,
-            } => run_switch(dry_run, no_range, no_autocenter),
+                disable_autocenter,
+            } => run_switch(dry_run, no_range, disable_autocenter),
             Command::Status => run_status(),
             Command::SetRange { degrees } => run_set_range(degrees),
             Command::SetAutocenter { state } => run_set_autocenter(state),
@@ -103,7 +103,7 @@ fn run_list() -> ExitCode {
 }
 
 /// Bascule un G27 en mode natif (ou simule l'opération en `--dry-run`).
-fn run_switch(dry_run: bool, no_range: bool, no_autocenter: bool) -> ExitCode {
+fn run_switch(dry_run: bool, no_range: bool, disable_autocenter: bool) -> ExitCode {
     if dry_run {
         println!("Simulation (--dry-run) : aucune donnée ne sera envoyée au volant.");
     } else {
@@ -111,7 +111,7 @@ fn run_switch(dry_run: bool, no_range: bool, no_autocenter: bool) -> ExitCode {
         println!("Le volant va se déconnecter puis se reconnecter automatiquement.");
     }
 
-    match switcher::switch_to_native_mode(dry_run, !no_range, !no_autocenter) {
+    match switcher::switch_to_native_mode(dry_run, !no_range, disable_autocenter) {
         Ok(outcome) if outcome.dry_run => {
             println!("Simulation OK : G27 éligible détecté → {}", outcome.device);
             ExitCode::SUCCESS
@@ -160,7 +160,9 @@ fn report_autocenter_step(step: switcher::AutocenterStep) {
     match step {
         switcher::AutocenterStep::Skipped => {}
         switcher::AutocenterStep::Disabled => {
-            println!("Autocentrage matériel désactivé (le jeu gère 100 % du retour de force).");
+            println!(
+                "Autocentrage matériel désactivé. Sans couche FFB active, le volant n'aura plus de force de centrage."
+            );
         }
         switcher::AutocenterStep::Deferred => {
             println!(
@@ -243,8 +245,8 @@ fn run_set_autocenter(state: AutocenterState) -> ExitCode {
     match autocenter::disable_autocenter() {
         Ok(outcome) => {
             println!(
-                "Autocentrage matériel désactivé pour le {}. Le jeu gère désormais 100 % du retour de force.",
-                outcome.device
+                "Autocentrage matériel désactivé pour le {outcome}. Sans couche FFB active, le volant n'aura plus de force de centrage.",
+                outcome = outcome.device
             );
             ExitCode::SUCCESS
         }

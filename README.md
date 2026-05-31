@@ -25,7 +25,8 @@ Windows 11.
 - [Migration depuis la v0.1.0](#migration-depuis-la-v010)
 - [Utilisation](#utilisation)
 - [Réglage de l'angle de rotation](#réglage-de-langle-de-rotation)
-- [Autocentrage et retour de force](#autocentrage-et-retour-de-force)
+- [Autocentrage](#autocentrage)
+- [Retour de force (FFB)](#retour-de-force-ffb)
 - [Mapping natif du G27](#mapping-natif-du-g27)
 - [Dépannage](#dépannage)
 - [Annexe : accès HID sous Linux (règle udev)](#annexe--accès-hid-sous-linux-règle-udev)
@@ -98,14 +99,13 @@ PID `0xC29B`. Windows lui applique alors **automatiquement son pilote manette de
 jeu HID natif** (signé Microsoft, sans composant Logitech) — donc **sans rien
 qui contrarie HVCI**.
 
-Une fois le volant réapparu en mode natif, l'outil lui envoie deux **commandes
-HID** supplémentaires, comme le faisait LGS : régler l'**angle de rotation à
-900°** (dérivée de `lg4ff_set_range_g25`), puis **désactiver l'autocentrage
-matériel** (dérivée de `lg4ff_set_autocenter_default`) afin que le jeu gère
-l'intégralité du retour de force — voir
-[Réglage de l'angle](#réglage-de-langle-de-rotation) et
-[Autocentrage](#autocentrage-et-retour-de-force). Ces réglages automatiques se
-désactivent avec `--no-range` et `--no-autocenter`.
+Une fois le volant réapparu en mode natif, l'outil règle l'**angle de rotation à
+900°** (commande HID dérivée de `lg4ff_set_range_g25`). Il **laisse l'autocentrage
+matériel actif** par défaut : sans FFB dynamique (voir
+[Retour de force (FFB)](#retour-de-force-ffb)), c'est la seule force de centrage
+du volant. Le réglage de l'angle se désactive avec `--no-range` ; l'autocentrage
+peut être coupé explicitement avec `--disable-autocenter` (ou
+`set-autocenter off`) — utile uniquement si une couche FFB prend le relais.
 
 > 💡 **Pourquoi pas de pilote USB brut (WinUSB) ?** Une approche USB raw type
 > WinUSB doit **déposséder** le pilote HID du volant. Or le firmware du G27 en
@@ -131,9 +131,10 @@ désactivent avec `--no-range` et `--no-autocenter`.
 1. Récupérez `g27-mode-switcher.exe` (voir [Installation](#installation-de-loutil)).
 2. Branchez le G27.
 3. Vérifiez l'état : `g27-mode-switcher status`.
-4. Basculez : `g27-mode-switcher switch`. Le volant se reconnecte en mode natif,
-   son angle de rotation est réglé sur **900°** et l'**autocentrage matériel est
-   désactivé** (pour laisser le jeu gérer le retour de force).
+4. Basculez : `g27-mode-switcher switch`. Le volant se reconnecte en mode natif
+   et son angle de rotation est réglé sur **900°**. L'**autocentrage matériel
+   reste actif** (c'est la seule force de centrage tant qu'il n'y a pas de FFB
+   dynamique — voir [Retour de force (FFB)](#retour-de-force-ffb)).
 
 C'est tout. Aucune étape d'installation de pilote.
 
@@ -220,12 +221,12 @@ g27-mode-switcher status
 # Lister tous les périphériques Logitech détectés
 g27-mode-switcher list
 
-# Basculer le volant en mode natif (règle 900° + désactive l'autocentrage)
+# Basculer le volant en mode natif (règle 900°, autocentrage laissé actif)
 g27-mode-switcher switch
 
-# Basculer sans régler l'angle, ou sans toucher à l'autocentrage
+# Basculer sans régler l'angle, ou en désactivant l'autocentrage matériel
 g27-mode-switcher switch --no-range
-g27-mode-switcher switch --no-autocenter
+g27-mode-switcher switch --disable-autocenter
 
 # Simuler la bascule sans rien envoyer au matériel
 g27-mode-switcher switch --dry-run
@@ -272,27 +273,31 @@ g27-mode-switcher set-range 900   # camion / simulation (pleine échelle)
 > outil sert de **valeur par défaut au niveau du firmware**, utile hors jeu ou
 > pour les titres qui respectent l'angle matériel.
 
-## Autocentrage et retour de force
+## Autocentrage
 
 Le G27 embarque un **ressort de rappel au centre géré par son firmware**
-(« autocentrage matériel »). Sans Logitech Gaming Software, ce ressort **reste
-actif en mode natif** et **lutte contre le retour de force du jeu** : le volant
-résiste anormalement au centre, comme s'il était tiré vers la position neutre,
-en plus (et à contre-courant) des effets envoyés par le simulateur.
+(« autocentrage matériel »), réglable indépendamment du FFB des jeux.
 
-LGS désactivait cet autocentrage au démarrage pour laisser le jeu gérer **100 %**
-du FFB. L'outil reproduit ce comportement : la commande `switch` **désactive
-automatiquement** l'autocentrage, et `set-autocenter` permet de le piloter
-manuellement.
+> ⚖️ **Pourquoi l'outil le laisse actif par défaut.** L'autocentrage matériel
+> n'est pas du vrai retour de force, mais **tant que le FFB dynamique n'est pas
+> disponible** (cas de la v0.2.0 — voir [Retour de force (FFB)](#retour-de-force-ffb)),
+> il fournit la **seule force de centrage** du volant. Le désactiver rendrait le
+> volant complètement **mou**. On ne le coupe donc que si une couche FFB prend le
+> relais (LGS, ou la future v0.3.0) — auquel cas le ressort matériel **lutterait**
+> contre les effets du jeu, ce que LGS évitait justement en le désactivant.
 
 ```bash
-g27-mode-switcher set-autocenter off   # désactive (recommandé pour jouer)
+# Couper l'autocentrage (seulement si une couche FFB gère déjà le centrage)
+g27-mode-switcher set-autocenter off
+
+# … ou directement pendant la bascule
+g27-mode-switcher switch --disable-autocenter
 ```
 
-- La désactivation **exige le mode natif** (`0xC29B`) ; en mode compatibilité,
-  l'outil vous invite à lancer `switch` d'abord.
-- Le réglage **n'est pas persistant** : l'autocentrage matériel se réactive au
-  rebranchement du volant. La commande `switch` le redésactive à chaque bascule.
+- Le réglage **exige le mode natif** (`0xC29B`) ; en mode compatibilité, l'outil
+  vous invite à lancer `switch` d'abord.
+- Il **n'est pas persistant** : l'autocentrage se réinitialise (réactivé) au
+  rebranchement du volant.
 - La **réactivation paramétrable** (`set-autocenter on` avec force réglable) est
   prévue pour la **v0.3.0** ; en v0.2.0, `on` n'est pas encore implémenté.
 
@@ -402,8 +407,8 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 8. ✅ Documentation utilisateur.
 9. ✅ Première version `v0.1.0`.
 10. ✅ `v0.2.0` : passage à l'API HID native (`hidapi`), suppression de Zadig,
-    commandes `set-range` et `set-autocenter`, et réglages automatiques après
-    bascule (angle 900° + désactivation de l'autocentrage matériel).
+    commandes `set-range` et `set-autocenter`, réglage automatique de l'angle à
+    900° après bascule (autocentrage matériel laissé actif par défaut).
 11. 🔜 `v0.3.0` : **interface graphique**, **keymapper** (mapping des boutons du
     G27 — notamment la boîte H — vers des touches clavier) pour les jeux qui ne
     savent pas remapper la boîte H, et **réactivation paramétrable** de

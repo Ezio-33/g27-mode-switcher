@@ -48,9 +48,12 @@ sans Zadig), sans dépendance externe à installer côté utilisateur.
   HID de 7 octets reprise de `lg4ff_set_autocenter_default` (cas `magnitude == 0`,
   `drivers/hid/hid-lg4ff.c`) : `[0xf5, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]`. Même
   convention hidapi (préfixe `0x00`). Sans LGS, le ressort de rappel au centre du
-  firmware reste actif et **lutte contre le FFB du jeu** ; on le désactive comme
-  le faisait LGS. Exposée via `set-autocenter off` ; `switch` l'applique
-  automatiquement **après** le `set-range 900` (désactivable via `--no-autocenter`).
+  firmware peut être désactivé via cette commande. Exposée via `set-autocenter off`.
+  **Défaut v0.2.0** : `switch` règle l'angle à 900° mais **laisse l'autocentrage
+  actif** — sans FFB dynamique (indisponible en HID natif sans pilote), c'est la
+  seule force de centrage ; le couper rendrait le volant mou. `--disable-autocenter`
+  le désactive explicitement (utile seulement si une couche FFB prend le relais,
+  cas LGS / future v0.3.0, où le ressort matériel lutterait sinon contre le jeu).
   La réactivation paramétrable (`on` : commandes `0xfe 0x0d` + `0x14`) est repoussée
   en v0.3.0.
 - **Important (leçon matérielle, v0.2.0)** : on reste sur le **pilote HID natif**.
@@ -181,7 +184,8 @@ contamination GPL.
 3. **Module `switcher`** : construction du magic packet, envoi via HID output
    report, gestion des erreurs.
 4. **CLI** via `clap` : sous-commandes `list`, `switch`, `status`, `set-range`,
-   `set-autocenter`, `--verbose`, `--dry-run`, `--no-range`, `--no-autocenter`.
+   `set-autocenter`, `--verbose`, `--dry-run`, `--no-range`,
+   `--disable-autocenter`.
 5. **Tests** unitaires sur la construction du packet et le parsing.
 6. **Cross-compile Windows** : config `.cargo/config.toml` + tests de build.
 7. **CI GitHub Actions** : workflow complet.
@@ -191,8 +195,9 @@ contamination GPL.
 10. **Refactor v0.2.0** : passage de `rusb`/WinUSB à l'API HID native
     (`hidapi`), suppression de la dépendance à Zadig. Module `report` (envoi HID
     factorisé), module `range` (commande `set-range`), module `autocenter`
-    (commande `set-autocenter`). `switch` applique auto, après reconnexion :
-    900° puis désactivation de l'autocentrage (comme LGS).
+    (commande `set-autocenter`). `switch` règle auto l'angle à 900° après
+    reconnexion ; autocentrage laissé actif par défaut (`--disable-autocenter`
+    pour le couper).
 11. **v0.3.0 (prévu)** : interface graphique + keymapper (mapping des boutons du
     G27, notamment la boîte H, vers le clavier) pour les jeux sans remap de boîte,
     et réactivation paramétrable de l'autocentrage (`set-autocenter on`).
