@@ -2,9 +2,9 @@
 
 use std::process::ExitCode;
 
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
-use crate::{hid, range, switcher};
+use crate::{autocenter, hid, range, switcher};
 
 /// Bascule un volant Logitech G27 vers son mode natif, sans pilote propriétaire.
 #[derive(Debug, Parser)]
@@ -39,6 +39,20 @@ enum Command {
         /// Angle de rotation souhaité, en degrés (40–900).
         degrees: u16,
     },
+    /// Active ou désactive l'autocentrage matériel (mode natif requis).
+    SetAutocenter {
+        /// `off` désactive le ressort matériel (laisse le jeu gérer le FFB).
+        state: AutocenterState,
+    },
+}
+
+/// État cible de l'autocentrage matériel.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AutocenterState {
+    /// Désactive l'autocentrage matériel.
+    Off,
+    /// Réactive l'autocentrage (réglage paramétrable prévu en v0.3.0).
+    On,
 }
 
 impl Cli {
@@ -50,6 +64,7 @@ impl Cli {
             Command::Switch { dry_run, no_range } => run_switch(dry_run, no_range),
             Command::Status => run_status(),
             Command::SetRange { degrees } => run_set_range(degrees),
+            Command::SetAutocenter { state } => run_set_autocenter(state),
         }
     }
 }
@@ -188,6 +203,40 @@ fn run_set_range(degrees: u16) -> ExitCode {
         }
         Err(error) => {
             eprintln!("Échec du réglage d'angle : {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Active/désactive l'autocentrage matériel (seule la désactivation est gérée).
+fn run_set_autocenter(state: AutocenterState) -> ExitCode {
+    if matches!(state, AutocenterState::On) {
+        eprintln!(
+            "La réactivation paramétrable de l'autocentrage arrivera en v0.3.0. (L'autocentrage se réactive de toute façon au rebranchement du volant.)"
+        );
+        return ExitCode::FAILURE;
+    }
+
+    match autocenter::disable_autocenter() {
+        Ok(outcome) => {
+            println!(
+                "Autocentrage matériel désactivé pour le {}. Le jeu gère désormais 100 % du retour de force.",
+                outcome.device
+            );
+            ExitCode::SUCCESS
+        }
+        Err(autocenter::Error::NotNative) => {
+            eprintln!(
+                "Le G27 est en mode compatibilité : la désactivation n'a aucun effet. Lancez « switch » d'abord."
+            );
+            ExitCode::FAILURE
+        }
+        Err(autocenter::Error::NoG27Found) => {
+            eprintln!("Aucun G27 détecté. Branchez le volant puis réessayez.");
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            eprintln!("Échec de la désactivation de l'autocentrage : {error}");
             ExitCode::FAILURE
         }
     }
