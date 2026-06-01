@@ -196,16 +196,82 @@ fn depuis_toml(contenu: &str) -> Config {
     }
 }
 
-/// Chemin du fichier de configuration (`<config_dir>/config.toml`).
+/// Nom du dossier applicatif sous le répertoire de configuration.
+const NOM_APP: &str = "g27-mode-switcher";
+
+/// Chemin du fichier de configuration (`<dossier_config>/config.toml`).
+///
+/// - Windows : `%APPDATA%\g27-mode-switcher\config.toml` ;
+/// - autres : `$XDG_CONFIG_HOME/g27-mode-switcher/config.toml`, sinon
+///   `~/.config/g27-mode-switcher/config.toml`.
 #[must_use]
 pub fn chemin() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "g27-mode-switcher")
-        .map(|dirs| dirs.config_dir().join("config.toml"))
+    dossier_config().map(|dossier| dossier.join("config.toml"))
+}
+
+/// Dossier de configuration de l'application, résolu via les variables
+/// d'environnement standard de l'OS (sans dépendance tierce).
+fn dossier_config() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("APPDATA").map(|appdata| PathBuf::from(appdata).join(NOM_APP))
+    }
+    #[cfg(not(windows))]
+    {
+        dossier_config_unix(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )
+    }
+}
+
+/// Logique de résolution POSIX (pure, testable) : `XDG_CONFIG_HOME` non vide,
+/// sinon `~/.config`.
+#[cfg(not(windows))]
+fn dossier_config_unix(
+    xdg_config_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    if let Some(xdg) = xdg_config_home.filter(|valeur| !valeur.is_empty()) {
+        Some(PathBuf::from(xdg).join(NOM_APP))
+    } else {
+        home.map(|home| PathBuf::from(home).join(".config").join(NOM_APP))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{Config, depuis_toml};
+
+    #[cfg(not(windows))]
+    #[test]
+    fn chemin_unix_prefere_xdg_config_home() {
+        use std::ffi::OsString;
+        use std::path::PathBuf;
+        let dossier = super::dossier_config_unix(
+            Some(OsString::from("/tmp/xdg")),
+            Some(OsString::from("/home/u")),
+        );
+        assert_eq!(dossier, Some(PathBuf::from("/tmp/xdg/g27-mode-switcher")));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn chemin_unix_repli_sur_home_config() {
+        use std::ffi::OsString;
+        use std::path::PathBuf;
+        let attendu = Some(PathBuf::from("/home/u/.config/g27-mode-switcher"));
+        // XDG absent → repli sur ~/.config.
+        assert_eq!(
+            super::dossier_config_unix(None, Some(OsString::from("/home/u"))),
+            attendu
+        );
+        // XDG défini mais vide → repli également.
+        assert_eq!(
+            super::dossier_config_unix(Some(OsString::new()), Some(OsString::from("/home/u"))),
+            attendu
+        );
+    }
 
     #[test]
     fn defaut_fait_un_aller_retour_toml() {

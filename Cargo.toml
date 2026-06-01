@@ -6,10 +6,10 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive"] }
-# Persistance de la configuration utilisateur (Phase 2). `directories` résout le
-# dossier de config par OS (~/.config sous Linux, %APPDATA% sous Windows) ; `toml`
-# (+ `serde` derive) sérialise/désérialise le fichier de réglages.
-directories = "5"
+# Persistance de la configuration utilisateur (Phase 2). `toml` (+ `serde` derive)
+# sérialise/désérialise le fichier de réglages. Le chemin du fichier est résolu à
+# la main via les variables d'environnement (cf. module `config`), sans
+# dépendance tierce — moins de surface, plus auditable.
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 # eframe sans wgpu : on ne garde que le backend glow (OpenGL) pour rester léger
