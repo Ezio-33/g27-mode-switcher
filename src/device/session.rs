@@ -25,8 +25,10 @@ pub enum Status {
 pub enum Command {
     /// Basculer le G27 en mode natif (avec réglages post-bascule).
     Switch {
-        /// Régler l'angle à 900° après la bascule.
+        /// Régler l'angle après la bascule.
         apply_range: bool,
+        /// Angle de rotation à appliquer si `apply_range` (degrés).
+        range_degrees: u16,
         /// Désactiver l'autocentrage matériel après la bascule.
         disable_autocenter: bool,
     },
@@ -218,12 +220,19 @@ fn handle_command(api: &mut hidapi::HidApi, evt_tx: &Sender<Event>, command: Com
     let report = match command {
         Command::Switch {
             apply_range,
+            range_degrees,
             disable_autocenter,
         } => OpReport {
             kind: OpKind::Switch,
-            result: switcher::switch_with_api(api, false, apply_range, disable_autocenter)
-                .map(|_| ())
-                .map_err(|error| OpError::from_switch(&error)),
+            result: switcher::switch_with_api(
+                api,
+                false,
+                apply_range,
+                range_degrees,
+                disable_autocenter,
+            )
+            .map(|_| ())
+            .map_err(|error| OpError::from_switch(&error)),
         },
         Command::SetRange(degrees) => OpReport {
             kind: OpKind::Range(degrees),

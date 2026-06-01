@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
 
-use g27_mode_switcher::{autocenter, hid, range, switcher};
+use g27_mode_switcher::{autocenter, config, hid, range, switcher};
 
 /// Bascule un volant Logitech G27 vers son mode natif, sans pilote propriétaire.
 #[derive(Debug, Parser)]
@@ -21,16 +21,16 @@ pub struct Cli {
 }
 
 /// Sous-commandes disponibles.
-#[derive(Debug, Clone, Copy, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 enum Command {
     /// Liste les périphériques Logitech détectés.
     List,
-    /// Bascule le G27 en mode natif (900°, retour de force complet).
+    /// Bascule le G27 en mode natif (retour de force complet).
     Switch {
         /// Simule l'opération : construit et valide le transfert sans rien envoyer.
         #[arg(long)]
         dry_run: bool,
-        /// Ne règle pas automatiquement l'angle à 900° après la bascule.
+        /// Ne règle pas automatiquement l'angle après la bascule.
         #[arg(long)]
         no_range: bool,
         /// Désactive l'autocentrage matériel après la bascule (laissé actif par défaut).
@@ -49,6 +49,29 @@ enum Command {
         /// `off` désactive le ressort matériel (laisse le jeu gérer le FFB).
         state: AutocenterState,
     },
+    /// Affiche ou modifie la configuration persistante.
+    Config {
+        /// Sans action : affiche le chemin et le contenu courant.
+        #[command(subcommand)]
+        action: Option<ConfigAction>,
+    },
+}
+
+/// Actions de la sous-commande `config`.
+#[derive(Debug, Clone, Subcommand)]
+enum ConfigAction {
+    /// Affiche la valeur d'une clé.
+    Get {
+        /// Clé à lire (ex. `angle_par_defaut`).
+        cle: String,
+    },
+    /// Modifie la valeur d'une clé et enregistre la configuration.
+    Set {
+        /// Clé à modifier (ex. `angle_par_defaut`).
+        cle: String,
+        /// Nouvelle valeur.
+        valeur: String,
+    },
 }
 
 /// État cible de l'autocentrage matériel.
@@ -66,8 +89,9 @@ impl Cli {
     pub fn run(self) -> ExitCode {
         match self.command {
             Some(command) => {
-                init_cli_logging(self.verbose);
-                dispatch(command)
+                let config = config::Config::charger();
+                init_cli_logging(self.verbose, &config.journalisation.verbosite);
+                dispatch(command, config)
             }
             None => crate::gui::run(self.verbose),
         }
@@ -75,9 +99,11 @@ impl Cli {
 }
 
 /// Initialise le logging CLI (sortie texte vers le terminal).
-fn init_cli_logging(verbose: u8) {
+///
+/// Précédence du niveau : `RUST_LOG` > `-v`/`-vv` > `config_level` > défaut.
+fn init_cli_logging(verbose: u8, config_level: &str) {
     let default_level = match verbose {
-        0 => "info",
+        0 => config_level,
         1 => "debug",
         _ => "trace",
     };
@@ -87,17 +113,18 @@ fn init_cli_logging(verbose: u8) {
 }
 
 /// Exécute une sous-commande CLI et renvoie son code de sortie.
-fn dispatch(command: Command) -> ExitCode {
+fn dispatch(command: Command, config: config::Config) -> ExitCode {
     match command {
         Command::List => run_list(),
         Command::Switch {
             dry_run,
             no_range,
             disable_autocenter,
-        } => run_switch(dry_run, no_range, disable_autocenter),
+        } => run_switch(dry_run, no_range, disable_autocenter, &config),
         Command::Status => run_status(),
         Command::SetRange { degrees } => run_set_range(degrees),
         Command::SetAutocenter { state } => run_set_autocenter(state),
+        Command::Config { action } => run_config(action, config),
     }
 }
 
@@ -128,15 +155,31 @@ fn run_list() -> ExitCode {
 }
 
 /// Bascule un G27 en mode natif (ou simule l'opération en `--dry-run`).
-fn run_switch(dry_run: bool, no_range: bool, disable_autocenter: bool) -> ExitCode {
+///
+/// L'angle appliqué et l'autocentrage proviennent de la configuration ; les
+/// options explicites restent prioritaires : `--no-range` désactive le réglage
+/// d'angle, `--disable-autocenter` force la désactivation de l'autocentrage.
+fn run_switch(
+    dry_run: bool,
+    no_range: bool,
+    disable_autocenter: bool,
+    config: &config::Config,
+) -> ExitCode {
+    let apply_range = !no_range && config.volant.appliquer_angle_au_switch;
+    let range_degrees = config.volant.angle_par_defaut;
+    let disable = disable_autocenter || config.volant.desactiver_autocentrage_au_switch;
+
     if dry_run {
         println!("Simulation (--dry-run) : aucune donnée ne sera envoyée au volant.");
+    } else if apply_range {
+        println!("Bascule du G27 vers le mode natif (angle réglé à {range_degrees}°)...");
+        println!("Le volant va se déconnecter puis se reconnecter automatiquement.");
     } else {
-        println!("Bascule du G27 vers le mode natif (900°, retour de force complet)...");
+        println!("Bascule du G27 vers le mode natif (sans réglage d'angle)...");
         println!("Le volant va se déconnecter puis se reconnecter automatiquement.");
     }
 
-    match switcher::switch_to_native_mode(dry_run, !no_range, disable_autocenter) {
+    match switcher::switch_to_native_mode(dry_run, apply_range, range_degrees, disable) {
         Ok(outcome) if outcome.dry_run => {
             println!("Simulation OK : G27 éligible détecté → {}", outcome.device);
             ExitCode::SUCCESS
@@ -287,6 +330,58 @@ fn run_set_autocenter(state: AutocenterState) -> ExitCode {
         }
         Err(error) => {
             eprintln!("Échec de la désactivation de l'autocentrage : {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Affiche ou modifie la configuration persistante.
+fn run_config(action: Option<ConfigAction>, config: config::Config) -> ExitCode {
+    match action {
+        None => run_config_show(&config),
+        Some(ConfigAction::Get { cle }) => run_config_get(&config, &cle),
+        Some(ConfigAction::Set { cle, valeur }) => run_config_set(config, &cle, &valeur),
+    }
+}
+
+/// Affiche le chemin et le contenu courant de la configuration.
+fn run_config_show(config: &config::Config) -> ExitCode {
+    match config::chemin() {
+        Some(chemin) => println!("Fichier de configuration : {}", chemin.display()),
+        None => println!("Fichier de configuration : introuvable sur ce système."),
+    }
+    println!();
+    print!("{}", config.vers_toml());
+    ExitCode::SUCCESS
+}
+
+/// Affiche la valeur d'une clé de configuration.
+fn run_config_get(config: &config::Config, cle: &str) -> ExitCode {
+    match config.lire_cle(cle) {
+        Ok(valeur) => {
+            println!("{valeur}");
+            ExitCode::SUCCESS
+        }
+        Err(erreur) => {
+            eprintln!("Erreur : {erreur}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Modifie une clé de configuration puis enregistre le fichier.
+fn run_config_set(mut config: config::Config, cle: &str, valeur: &str) -> ExitCode {
+    if let Err(erreur) = config.definir_cle(cle, valeur) {
+        eprintln!("Erreur : {erreur}");
+        return ExitCode::FAILURE;
+    }
+    match config.enregistrer() {
+        Ok(()) => {
+            println!("Réglage « {cle} » = {valeur} enregistré.");
+            ExitCode::SUCCESS
+        }
+        Err(erreur) => {
+            eprintln!("Échec de l'enregistrement de la configuration : {erreur}");
             ExitCode::FAILURE
         }
     }

@@ -153,8 +153,12 @@ impl App {
                     .min_size(egui::vec2(ui.available_width(), 40.0));
                     if ui.add(button).clicked() {
                         self.session.send(Command::Switch {
-                            apply_range: true,
-                            disable_autocenter: false,
+                            apply_range: self.config.volant.appliquer_angle_au_switch,
+                            range_degrees: self.range_deg,
+                            disable_autocenter: self
+                                .config
+                                .volant
+                                .desactiver_autocentrage_au_switch,
                         });
                         self.log.push(LineKind::Info, "Bascule demandée\u{2026}");
                     }

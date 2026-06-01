@@ -10,9 +10,13 @@
 //! Les structs et les clés TOML suivent une nomenclature **française** (sans
 //! accents, pour rester des identifiants Rust et des clés TOML valides).
 
+mod cles;
+
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+
+pub use cles::{CLES_MODIFIABLES, ErreurCle};
 
 /// Angle de rotation minimal accepté (degrés), cf. `lg4ff_set_range_g25`.
 const ANGLE_MIN: u16 = 40;
@@ -155,6 +159,12 @@ impl Config {
         std::fs::write(&temporaire, contenu)?;
         std::fs::rename(&temporaire, &chemin)?;
         Ok(())
+    }
+
+    /// Rend la configuration sous forme de texte TOML (pour l'affichage CLI).
+    #[must_use]
+    pub fn vers_toml(&self) -> String {
+        toml::to_string_pretty(self).unwrap_or_default()
     }
 
     /// Borne et normalise les valeurs lues pour qu'elles restent cohérentes.

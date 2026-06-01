@@ -117,8 +117,9 @@ pub enum Error {
 /// En `dry_run`, la séquence est construite et validée, mais aucun octet n'est
 /// envoyé au matériel. Hors `dry_run`, une fois le volant réapparu en mode
 /// natif, l'outil applique les réglages demandés : l'angle de rotation à
-/// [`range::DEFAULT_RANGE_DEGREES`] (900°) si `apply_range`, puis — uniquement
-/// si `disable_autocenter` — la désactivation de l'autocentrage matériel.
+/// `range_degrees` (typiquement [`range::DEFAULT_RANGE_DEGREES`], 900°, ou la
+/// valeur configurée) si `apply_range`, puis — uniquement si
+/// `disable_autocenter` — la désactivation de l'autocentrage matériel.
 ///
 /// Par défaut, l'autocentrage matériel est **laissé actif** : sans FFB dynamique
 /// (indisponible en HID natif sans pilote), il constitue la seule force de
@@ -135,10 +136,17 @@ pub enum Error {
 pub fn switch_to_native_mode(
     dry_run: bool,
     apply_range: bool,
+    range_degrees: u16,
     disable_autocenter: bool,
 ) -> Result<SwitchOutcome, Error> {
     let mut api = hidapi::HidApi::new().map_err(report::Error::from)?;
-    switch_with_api(&mut api, dry_run, apply_range, disable_autocenter)
+    switch_with_api(
+        &mut api,
+        dry_run,
+        apply_range,
+        range_degrees,
+        disable_autocenter,
+    )
 }
 
 /// Bascule en mode natif en réutilisant une instance [`hidapi::HidApi`] fournie.
@@ -155,6 +163,7 @@ pub fn switch_with_api(
     api: &mut hidapi::HidApi,
     dry_run: bool,
     apply_range: bool,
+    range_degrees: u16,
     disable_autocenter: bool,
 ) -> Result<SwitchOutcome, Error> {
     let sequence = mode_switch_sequence();
@@ -188,7 +197,8 @@ pub fn switch_with_api(
         sequence.len()
     );
 
-    let (range, autocenter) = apply_post_switch_settings(api, apply_range, disable_autocenter);
+    let (range, autocenter) =
+        apply_post_switch_settings(api, apply_range, range_degrees, disable_autocenter);
 
     Ok(SwitchOutcome {
         device: info,
@@ -216,13 +226,14 @@ fn find_compat_g27(api: &hidapi::HidApi) -> Result<hid::DeviceInfo, Error> {
 fn apply_post_switch_settings(
     api: &mut hidapi::HidApi,
     apply_range: bool,
+    range_degrees: u16,
     disable_autocenter: bool,
 ) -> (RangeStep, AutocenterStep) {
     if !apply_range && !disable_autocenter {
         return (RangeStep::Skipped, AutocenterStep::Skipped);
     }
 
-    let degrees = range::DEFAULT_RANGE_DEGREES;
+    let degrees = range_degrees;
     let Some(native) = wait_for_native_g27(api) else {
         tracing::warn!("le G27 n'est pas réapparu en mode natif à temps ; réglages différés");
         return (
