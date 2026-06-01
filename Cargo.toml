@@ -6,6 +6,12 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive"] }
+# Persistance de la configuration utilisateur (Phase 2). `directories` résout le
+# dossier de config par OS (~/.config sous Linux, %APPDATA% sous Windows) ; `toml`
+# (+ `serde` derive) sérialise/désérialise le fichier de réglages.
+directories = "5"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
 # eframe sans wgpu : on ne garde que le backend glow (OpenGL) pour rester léger
 # et garder un .exe autonome (DLL système uniquement). `default_fonts` fournit
 # les polices de corps par défaut d'egui (Cinzel est embarqué en plus).
