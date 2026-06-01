@@ -30,6 +30,8 @@ pub const LIVE: Color32 = Color32::from_rgb(0xff, 0x3b, 0x46);
 
 /// Clé de la famille de police des titres (Cinzel).
 const CINZEL: &str = "cinzel";
+/// Clé de la police de corps (Inter), proportionnelle par défaut.
+const INTER: &str = "inter";
 
 /// Famille de police des titres (Cinzel) pour composer un `RichText`.
 #[must_use]
@@ -42,8 +44,8 @@ pub fn card_frame() -> egui::Frame {
     egui::Frame::default()
         .fill(BG_CARD)
         .stroke(Stroke::new(1.0, BORDER))
-        .corner_radius(egui::CornerRadius::same(8))
-        .inner_margin(egui::Margin::same(14))
+        .corner_radius(egui::CornerRadius::same(10))
+        .inner_margin(egui::Margin::symmetric(16, 14))
 }
 
 /// Cadre du journal : identique à une carte mais sur le fond le plus profond.
@@ -51,13 +53,13 @@ pub fn journal_frame() -> egui::Frame {
     card_frame().fill(BG_DEEP)
 }
 
-/// Cadre arrondi de la pastille de statut.
+/// Cadre arrondi (forme pilule) de la pastille de statut.
 pub fn pill_frame() -> egui::Frame {
     egui::Frame::default()
         .fill(BG_ELEVATED)
         .stroke(Stroke::new(1.0, BORDER_STRONG))
-        .corner_radius(egui::CornerRadius::same(10))
-        .inner_margin(egui::Margin::symmetric(10, 5))
+        .corner_radius(egui::CornerRadius::same(14))
+        .inner_margin(egui::Margin::symmetric(16, 7))
 }
 
 /// Installe la police Cinzel et le thème sombre sur le contexte egui.
@@ -66,9 +68,14 @@ pub fn install(ctx: &egui::Context) {
     install_style(ctx);
 }
 
-/// Embarque Cinzel et l'enregistre comme famille nommée dédiée aux titres.
+/// Embarque Cinzel (titres) et Inter (corps) dans le binaire.
+///
+/// Cinzel est exposé comme famille nommée dédiée aux titres ; Inter devient la
+/// police proportionnelle prioritaire (les polices par défaut d'egui restent en
+/// repli pour les glyphes manquants).
 fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
+
     fonts.font_data.insert(
         CINZEL.to_owned(),
         Arc::new(egui::FontData::from_static(include_bytes!(
@@ -80,6 +87,19 @@ fn install_fonts(ctx: &egui::Context) {
         .entry(FontFamily::Name(CINZEL.into()))
         .or_default()
         .insert(0, CINZEL.to_owned());
+
+    fonts.font_data.insert(
+        INTER.to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/Inter-Variable.ttf"
+        ))),
+    );
+    fonts
+        .families
+        .entry(FontFamily::Proportional)
+        .or_default()
+        .insert(0, INTER.to_owned());
+
     ctx.set_fonts(fonts);
 }
 
@@ -121,10 +141,10 @@ fn install_style(ctx: &egui::Context) {
     );
     style
         .text_styles
-        .insert(TextStyle::Body, FontId::new(15.0, FontFamily::Proportional));
+        .insert(TextStyle::Body, FontId::new(14.0, FontFamily::Proportional));
     style.text_styles.insert(
         TextStyle::Button,
-        FontId::new(15.0, FontFamily::Proportional),
+        FontId::new(14.0, FontFamily::Proportional),
     );
     style.text_styles.insert(
         TextStyle::Small,
