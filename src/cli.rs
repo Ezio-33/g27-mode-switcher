@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
 
+use g27_mode_switcher::keymapper::{self, Bouton, EtatBoutons, LecteurBoutons};
 use g27_mode_switcher::{autocenter, config, hid, range, switcher};
 
 /// Bascule un volant Logitech G27 vers son mode natif, sans pilote propriétaire.
@@ -55,6 +56,8 @@ enum Command {
         #[command(subcommand)]
         action: Option<ConfigAction>,
     },
+    /// Lit en direct les boutons du G27 natif (debug/calibration du keymapper).
+    Boutons,
 }
 
 /// Actions de la sous-commande `config`.
@@ -125,6 +128,7 @@ fn dispatch(command: Command, config: config::Config) -> ExitCode {
         Command::SetRange { degrees } => run_set_range(degrees),
         Command::SetAutocenter { state } => run_set_autocenter(state),
         Command::Config { action } => run_config(action, config),
+        Command::Boutons => run_boutons(),
     }
 }
 
@@ -367,6 +371,87 @@ fn run_config_get(config: &config::Config, cle: &str) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Lit en direct les boutons du G27 (debug/calibration du keymapper).
+///
+/// Boucle jusqu'à interruption (Ctrl+C) : affiche, à chaque changement, le
+/// rapport HID brut, les bits armés (indices absolus depuis l'octet 0) et les
+/// rapports de boîte H reconnus. Sert à caler `OCTET_DEBUT_BOUTONS` sur le vrai
+/// volant.
+fn run_boutons() -> ExitCode {
+    println!("Lecture des boutons du G27 natif (Ctrl+C pour quitter).");
+    println!(
+        "Boutons HID attendus : 1re=13 2e=14 3e=15 4e=16 5e=17 6e=18 MA=23 ; lus au bit (n-1) depuis l'octet {}.",
+        keymapper::OCTET_DEBUT_BOUTONS
+    );
+    println!("Engagez chaque rapport pour repérer le bit qui s'arme.\n");
+
+    let api = match hidapi::HidApi::new() {
+        Ok(api) => api,
+        Err(erreur) => {
+            eprintln!("Erreur : accès HID impossible : {erreur}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut lecteur = match LecteurBoutons::ouvrir(&api) {
+        Ok(lecteur) => lecteur,
+        Err(erreur) => {
+            eprintln!("Erreur : {erreur}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mut derniere = String::new();
+    loop {
+        match lecteur.lire(200) {
+            Ok(true) => {
+                let ligne = format_rapport(lecteur.rapport(), lecteur.etat());
+                if ligne != derniere {
+                    println!("{ligne}");
+                    derniere = ligne;
+                }
+            }
+            Ok(false) => {}
+            Err(erreur) => {
+                eprintln!("Erreur de lecture : {erreur}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+}
+
+/// Formate un rapport HID pour la calibration : hex, bits armés, rapports reconnus.
+fn format_rapport(rapport: &[u8], etat: EtatBoutons) -> String {
+    let hex: Vec<String> = rapport.iter().map(|octet| format!("{octet:02x}")).collect();
+    let engages: Vec<&str> = Bouton::TOUS
+        .iter()
+        .filter(|bouton| etat.contient(**bouton))
+        .map(|bouton| bouton.libelle())
+        .collect();
+    let engages = if engages.is_empty() {
+        "—".to_owned()
+    } else {
+        engages.join(", ")
+    };
+    format!(
+        "[{hex}]  bits = {bits:?}  →  rapports : {engages}",
+        hex = hex.join(" "),
+        bits = bits_armes(rapport),
+    )
+}
+
+/// Indices absolus (depuis l'octet 0) des bits armés dans le rapport.
+fn bits_armes(rapport: &[u8]) -> Vec<usize> {
+    let mut bits = Vec::new();
+    for (index_octet, octet) in rapport.iter().enumerate() {
+        for bit in 0u8..8 {
+            if octet & (1u8 << bit) != 0 {
+                bits.push(index_octet * 8 + usize::from(bit));
+            }
+        }
+    }
+    bits
 }
 
 /// Modifie une clé de configuration puis enregistre le fichier.
