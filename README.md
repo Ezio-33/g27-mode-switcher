@@ -29,6 +29,7 @@ Windows 11.
 - [Installation de l'outil](#installation-de-loutil)
 - [Migration depuis la v0.1.0](#migration-depuis-la-v010)
 - [Utilisation](#utilisation)
+- [Configuration](#configuration)
 - [Réglage de l'angle de rotation](#réglage-de-langle-de-rotation)
 - [Autocentrage](#autocentrage)
 - [Retour de force (FFB)](#retour-de-force-ffb)
@@ -275,10 +276,89 @@ La verbosité est aussi pilotable via la variable d'environnement `RUST_LOG`
 > automatiser ce lancement au démarrage de Windows (raccourci dans le dossier
 > *Démarrage*, ou tâche planifiée).
 
+## Configuration
+
+Depuis la **v0.3.0**, l'outil mémorise vos réglages dans un fichier **TOML**.
+La GUI les enregistre automatiquement (angle, autocentrage, taille et position de
+la fenêtre) ; la commande `switch` lit l'angle configuré.
+
+### Emplacement du fichier
+
+| OS | Chemin |
+|----|--------|
+| **Windows** | `%APPDATA%\g27-mode-switcher\config.toml` |
+| **Linux / macOS** | `$XDG_CONFIG_HOME/g27-mode-switcher/config.toml`, sinon `~/.config/g27-mode-switcher/config.toml` |
+
+La commande `g27-mode-switcher config` affiche le chemin exact **et** le contenu
+courant. Le dossier est créé automatiquement à la première écriture. Aucun accès
+disque n'a lieu en dehors de ce dossier.
+
+### Exemple
+
+```toml
+[volant]
+angle_par_defaut = 900            # angle appliqué au switch (40–900)
+appliquer_angle_au_switch = true  # régler l'angle automatiquement au switch
+desactiver_autocentrage_au_switch = false
+
+[fenetre]
+largeur = 480.0
+hauteur = 680.0
+pos_x = 200.0                     # absent au premier lancement
+pos_y = 120.0
+
+[journalisation]
+verbosite = "info"                # info | debug | trace
+```
+
+### Clés
+
+| Clé | Type | Défaut | Rôle |
+|-----|------|--------|------|
+| `angle_par_defaut` | entier 40–900 | `900` | Angle appliqué par `switch`. |
+| `appliquer_angle_au_switch` | booléen | `true` | Régler l'angle lors du `switch`. |
+| `desactiver_autocentrage_au_switch` | booléen | `false` | Couper l'autocentrage au `switch`. |
+| `verbosite` | `info`/`debug`/`trace` | `info` | Niveau de logs par défaut. |
+| `largeur` / `hauteur` / `pos_x` / `pos_y` | nombres | 480×680 | Géométrie de la fenêtre (gérée par la GUI). |
+
+### Modifier la configuration en ligne de commande
+
+```bash
+# Afficher le chemin et le contenu courant
+g27-mode-switcher config
+
+# Lire une clé
+g27-mode-switcher config get angle_par_defaut
+
+# Modifier une clé (valeur validée, puis enregistrée)
+g27-mode-switcher config set angle_par_defaut 540
+g27-mode-switcher config set verbosite debug
+```
+
+Les booléens acceptent `true`/`false` (ou `vrai`/`faux`, `oui`/`non`, `1`/`0`).
+Une clé inconnue ou une valeur invalide est **refusée** avec un message clair,
+sans modifier le fichier.
+
+### Comportement si le fichier est absent ou corrompu
+
+Le chargement est **tolérant** : fichier absent, illisible ou TOML invalide →
+l'application démarre sur les **valeurs par défaut** (avec un avertissement au
+journal), sans jamais bloquer. Les valeurs hors bornes sont **corrigées**
+silencieusement (angle ramené dans 40–900, verbosité inconnue → `info`).
+
+### Précédence de la verbosité
+
+Du plus prioritaire au moins prioritaire :
+
+```text
+RUST_LOG  >  -v / -vv  >  verbosite (config)  >  info (défaut)
+```
+
 ## Réglage de l'angle de rotation
 
 En mode natif, le G27 accepte un **angle de rotation** réglable de **40° à
-900°**. La commande `switch` applique **900°** par défaut ; la commande
+900°**. La commande `switch` applique l'angle **configuré** (`angle_par_defaut`,
+900° par défaut — voir [Configuration](#configuration)) ; la commande
 `set-range` permet de choisir une autre valeur, par exemple selon le type de
 course :
 

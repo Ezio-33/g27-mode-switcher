@@ -208,7 +208,13 @@ contamination GPL.
       session (bascule, slider d'angle custom + valeur éditable + préréglages,
       interrupteurs d'autocentrage, journal relié à `tracing`), fix console hybride
       (`#![windows_subsystem = "windows"]` + `AttachConsole`).
-    - **Phase 2 — Config TOML** : persistance des réglages (`~/.config/g27-mode-switcher/`).
+    - **Phase 2 — Config TOML (✅ faite)** : module `config` (sections FR `[volant]`,
+      `[fenetre]`, `[journalisation]`), chargement tolérant + assainissement +
+      écriture atomique, chemin résolu à la main via variables d'environnement
+      (`%APPDATA%` / `$XDG_CONFIG_HOME` / `~/.config`, sans dépendance `directories`).
+      La GUI charge/persiste réglages + géométrie ; la CLI expose `config`,
+      `config get`, `config set` ; `switch` lit l'angle configuré. Précédence
+      verbosité : `RUST_LOG` > `-v`/`-vv` > config > défaut.
     - **Phase 3 — Keymapper boîte H** : mapping des boutons du G27 (boîte H, boutons
       13–18 + 23) vers le clavier (`enigo`/SendInput) pour les jeux sans remap.
     - **Phase 4 — Détection vJoy + feeder d'entrée** : détection runtime de
