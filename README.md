@@ -215,6 +215,27 @@ pilote HID natif au volant :
 
 L'outil fonctionne en **user-mode** : aucun droit administrateur n'est requis.
 
+### Interface graphique
+
+**Lancé sans sous-commande**, l'outil ouvre son **interface graphique** (depuis
+la v0.3.0) :
+
+```bash
+# Double-clic sur l'.exe, ou simplement :
+g27-mode-switcher
+```
+
+La fenêtre affiche le mode courant du volant en temps réel et regroupe les
+actions (bascule en mode natif, angle de rotation avec préréglages, autocentrage,
+journal). L'application est **hybride** : lancée depuis un terminal **avec** une
+sous-commande, elle se comporte en outil en ligne de commande classique (la
+sortie s'affiche dans le terminal) ; sans sous-commande, elle bascule en GUI.
+
+> La GUI est encore en cours de finition visuelle (voir la *dette design* dans
+> les notes de développement) ; ses fonctions sont pleinement opérationnelles.
+
+### Ligne de commande
+
 ```bash
 # Aide générale et version
 g27-mode-switcher --help
@@ -487,9 +508,10 @@ Distribué sous licence **MIT** — voir [`LICENSE`](LICENSE) (version anglaise
 canonique, **seule juridiquement valable**). Une traduction française
 **indicative** est disponible dans [`LICENSE.fr.md`](LICENSE.fr.md).
 
-La police **Cinzel** embarquée dans l'interface graphique (titres) est
-distribuée sous **SIL Open Font License 1.1** — voir
-[`assets/fonts/OFL.txt`](assets/fonts/OFL.txt).
+Les polices embarquées dans l'interface graphique sont distribuées sous **SIL
+Open Font License 1.1** : **Cinzel** (titres) — voir
+[`assets/fonts/OFL.txt`](assets/fonts/OFL.txt) — et **Inter** (corps) — voir
+[`assets/fonts/OFL-Inter.txt`](assets/fonts/OFL-Inter.txt).
 
 S'inspirer du comportement *documenté* du noyau Linux (GPL-2.0) sans en copier
 le code n'entraîne pas de contamination GPL.
