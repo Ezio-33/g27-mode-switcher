@@ -13,6 +13,7 @@ pub mod autocenter;
 pub mod config;
 pub mod device;
 pub mod hid;
+pub mod keymapper;
 pub mod range;
 pub mod report;
 pub mod switcher;
