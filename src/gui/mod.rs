@@ -14,14 +14,20 @@ use eframe::egui;
 /// exécute la boucle eframe. Renvoie le code de sortie du processus.
 #[must_use]
 pub fn run(verbose: u8) -> ExitCode {
-    let buffer = log::LogBuffer::new();
-    log::init(verbose, buffer.clone());
+    let config = g27_mode_switcher::config::Config::charger();
 
+    let buffer = log::LogBuffer::new();
+    log::init(verbose, &config.journalisation.verbosite, buffer.clone());
+
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([config.fenetre.largeur, config.fenetre.hauteur])
+        .with_min_inner_size([420.0, 560.0])
+        .with_title("G27 Mode Switcher");
+    if let (Some(x), Some(y)) = (config.fenetre.pos_x, config.fenetre.pos_y) {
+        viewport = viewport.with_position([x, y]);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([480.0, 680.0])
-            .with_min_inner_size([420.0, 560.0])
-            .with_title("G27 Mode Switcher"),
+        viewport,
         ..Default::default()
     };
 
@@ -30,7 +36,7 @@ pub fn run(verbose: u8) -> ExitCode {
         options,
         Box::new(move |cc| {
             theme::install(&cc.egui_ctx);
-            Ok(Box::new(app::App::new(buffer.clone())))
+            Ok(Box::new(app::App::new(config, buffer.clone())))
         }),
     );
 

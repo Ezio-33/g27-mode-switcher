@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use eframe::egui::{self, RichText, Stroke};
+use g27_mode_switcher::config::Config;
 use g27_mode_switcher::device::{Command, DeviceSession, Event, OpError, OpKind, OpReport, Status};
 
 use super::log::{self, LineKind, LogBuffer};
@@ -37,19 +38,51 @@ pub struct App {
     range_deg: u16,
     autocenter_disabled: bool,
     about_open: bool,
+    config: Config,
 }
 
 impl App {
-    /// Crée l'application et démarre la session matérielle.
+    /// Crée l'application et démarre la session matérielle, en initialisant les
+    /// contrôles depuis la configuration chargée.
     #[must_use]
-    pub fn new(log: LogBuffer) -> Self {
+    pub fn new(config: Config, log: LogBuffer) -> Self {
         Self {
             session: DeviceSession::spawn(),
             log,
             status: Status::Absent,
-            range_deg: 900,
-            autocenter_disabled: false,
+            range_deg: config.volant.angle_par_defaut,
+            autocenter_disabled: config.volant.desactiver_autocentrage_au_switch,
             about_open: false,
+            config,
+        }
+    }
+
+    /// Mémorise la géométrie courante de la fenêtre dans la configuration.
+    fn capturer_geometrie(&mut self, ctx: &egui::Context) {
+        ctx.input(|entree| {
+            let viewport = entree.viewport();
+            if let Some(rect) = viewport.inner_rect {
+                self.config.fenetre.largeur = rect.width();
+                self.config.fenetre.hauteur = rect.height();
+            }
+            if let Some(rect) = viewport.outer_rect {
+                self.config.fenetre.pos_x = Some(rect.min.x);
+                self.config.fenetre.pos_y = Some(rect.min.y);
+            }
+        });
+    }
+
+    /// Reporte les réglages courants dans la configuration et l'enregistre.
+    fn persister_reglages(&mut self) {
+        self.config.volant.angle_par_defaut = self.range_deg;
+        self.config.volant.desactiver_autocentrage_au_switch = self.autocenter_disabled;
+        self.sauvegarder_config();
+    }
+
+    /// Enregistre la configuration ; un échec est journalisé sans bloquer l'app.
+    fn sauvegarder_config(&self) {
+        if let Err(erreur) = self.config.enregistrer() {
+            tracing::warn!(%erreur, "Échec d'enregistrement de la configuration.");
         }
     }
 
@@ -68,6 +101,7 @@ impl App {
                 }
             }
         }
+        self.capturer_geometrie(ctx);
         ctx.request_repaint_after(REPAINT_INTERVAL);
     }
 
@@ -167,6 +201,10 @@ impl App {
             ui.set_width(ui.available_width());
             section_label(ui, "ANGLE DE ROTATION");
             ui.add_space(8.0);
+            // `commit` : l'utilisateur a fini de régler l'angle (relâché slider,
+            // validé la saisie, ou choisi un préréglage) → on envoie et on
+            // persiste une seule fois (anti-spam disque/HID).
+            let mut commit = false;
             ui.add_enabled_ui(is_native, |ui| {
                 ui.horizontal(|ui| {
                     // La valeur éditable (Cinzel or) est collée à droite ; le
@@ -175,7 +213,7 @@ impl App {
                     let slider_w = (ui.available_width() - VALUE_WIDTH).max(80.0);
                     let slider = angle_slider(ui, &mut self.range_deg, slider_w);
                     if slider.drag_stopped() || slider.clicked() {
-                        self.session.send(Command::SetRange(self.range_deg));
+                        commit = true;
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Champ de saisie : clic-glisser ou double-clic pour taper
@@ -192,8 +230,9 @@ impl App {
                             .range(RANGE_MIN..=RANGE_MAX)
                             .suffix("\u{b0}")
                             .speed(1.0);
-                        if ui.add(drag).changed() {
-                            self.session.send(Command::SetRange(self.range_deg));
+                        let response = ui.add(drag);
+                        if response.drag_stopped() || response.lost_focus() {
+                            commit = true;
                         }
                     });
                 });
@@ -212,11 +251,15 @@ impl App {
                                 .stroke(Stroke::new(1.0, theme::BORDER_STRONG));
                         if ui.add(preset).clicked() {
                             self.range_deg = degrees;
-                            self.session.send(Command::SetRange(degrees));
+                            commit = true;
                         }
                     }
                 });
             });
+            if commit {
+                self.session.send(Command::SetRange(self.range_deg));
+                self.persister_reglages();
+            }
         });
     }
 
@@ -244,6 +287,7 @@ impl App {
                 self.session.send(Command::SetAutocenter {
                     enable: !self.autocenter_disabled,
                 });
+                self.persister_reglages();
             }
 
             ui.add_space(12.0);
@@ -339,6 +383,12 @@ impl App {
 impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         theme::BG_BASE.to_normalized_gamma_f32()
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // À la fermeture, on persiste la dernière géométrie de fenêtre (capturée
+        // à chaque frame) ainsi que les réglages courants.
+        self.persister_reglages();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

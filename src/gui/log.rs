@@ -79,9 +79,12 @@ impl Default for LogBuffer {
 }
 
 /// Installe le logging de la GUI : filtre par verbosité + pont vers le tampon.
-pub fn init(verbose: u8, buffer: LogBuffer) {
+///
+/// Précédence du niveau : `RUST_LOG` > `-v`/`-vv` > `config_level` (config) >
+/// défaut. `config_level` provient de la configuration (section journalisation).
+pub fn init(verbose: u8, config_level: &str, buffer: LogBuffer) {
     let default_level = match verbose {
-        0 => "info",
+        0 => config_level,
         1 => "debug",
         _ => "trace",
     };
