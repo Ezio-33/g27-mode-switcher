@@ -71,7 +71,7 @@ impl App {
         ctx.request_repaint_after(REPAINT_INTERVAL);
     }
 
-    /// En-tête : titre Cinzel + pastille de statut.
+    /// En-tête : titre Cinzel + pastille de statut, tous deux centrés.
     fn header(&self, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
             ui.label(
@@ -80,16 +80,18 @@ impl App {
                     .size(25.0)
                     .color(theme::GOLD),
             );
-            ui.add_space(8.0);
+        });
+        ui.add_space(8.0);
 
-            let (color, text) = match self.status {
-                Status::Native => (
-                    theme::SUCCESS,
-                    "Mode natif — 900° — retour de force complet",
-                ),
-                Status::Compatibility => (theme::WARNING, "Mode compatibilité (200°)"),
-                Status::Absent => (theme::TEXT_DIM, "Aucun G27 détecté"),
-            };
+        let (color, text) = match self.status {
+            Status::Native => (
+                theme::SUCCESS,
+                "Mode natif — 900° — retour de force complet",
+            ),
+            Status::Compatibility => (theme::WARNING, "Mode compatibilité (200°)"),
+            Status::Absent => (theme::TEXT_DIM, "Aucun G27 détecté"),
+        };
+        centered_row(ui, "pastille_statut", |ui| {
             theme::pill_frame().show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 9.0;
@@ -267,27 +269,28 @@ impl App {
         });
     }
 
-    /// Pied de page : liens centrés + « À propos ».
+    /// Pied de page : liens centrés + « À propos » (la bordure haute est fournie
+    /// par le séparateur du `TopBottomPanel`).
     fn footer(&mut self, ui: &mut egui::Ui) {
-        ui.separator();
-        ui.add_space(4.0);
-        ui.vertical_centered(|ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 12.0;
-                footer_link(ui, "Site", URL_SITE);
-                footer_sep(ui);
-                footer_link(ui, "Discord", URL_DISCORD);
-                footer_sep(ui);
-                footer_link(ui, "Soutenir", URL_TIP);
-                footer_sep(ui);
-                let about =
-                    egui::Button::new(RichText::new("À propos").small().color(theme::GOLD_DARK))
-                        .frame(false);
-                if ui.add(about).clicked() {
-                    self.about_open = true;
-                }
-            });
+        let mut about_clicked = false;
+        centered_row(ui, "liens_pied", |ui| {
+            ui.spacing_mut().item_spacing.x = 12.0;
+            footer_link(ui, "Site", URL_SITE);
+            footer_sep(ui);
+            footer_link(ui, "Discord", URL_DISCORD);
+            footer_sep(ui);
+            footer_link(ui, "Soutenir", URL_TIP);
+            footer_sep(ui);
+            let about =
+                egui::Button::new(RichText::new("À propos").small().color(theme::GOLD_DARK))
+                    .frame(false);
+            if ui.add(about).clicked() {
+                about_clicked = true;
+            }
         });
+        if about_clicked {
+            self.about_open = true;
+        }
     }
 
     /// Fenêtre « À propos ».
@@ -341,39 +344,49 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll(ui.ctx());
 
-        // En-tête et séparateur en pleine largeur (bord à bord), comme la maquette.
-        ui.add_space(8.0);
-        self.header(ui);
-        ui.add_space(10.0);
-        ui.separator();
-
-        // Les cartes sont en retrait latéral (16px) pour se détacher comme des
-        // cartes distinctes (eframe ne fournit aucune marge par défaut).
-        egui::Frame::NONE
-            .inner_margin(egui::Margin {
-                left: 16,
-                right: 16,
-                top: 12,
-                bottom: 0,
-            })
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                self.card_mode(ui);
-                ui.add_space(12.0);
-                self.card_angle(ui);
-                ui.add_space(12.0);
-                self.card_ffb(ui);
-                ui.add_space(12.0);
-
-                // Le journal occupe l'espace restant au-dessus du pied de page.
-                let footer_height = 40.0;
-                let journal_height = (ui.available_height() - footer_height).max(110.0);
-                ui.allocate_ui(egui::vec2(ui.available_width(), journal_height), |ui| {
-                    self.card_journal(ui);
-                });
+        // Pied de page ancré en bas (réservé avant le panneau central pour rester
+        // toujours visible), fond panneau + bordure haute comme la maquette.
+        egui::Panel::bottom("pied_de_page")
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::BG_PANEL)
+                    .inner_margin(egui::Margin::symmetric(12, 6)),
+            )
+            .show_separator_line(true)
+            .show_inside(ui, |ui| {
+                self.footer(ui);
             });
 
-        self.footer(ui);
+        // Reste de la fenêtre : en-tête pleine largeur, cartes en retrait latéral
+        // (16px) pour se détacher, journal occupant la hauteur restante.
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show_inside(ui, |ui| {
+                ui.add_space(8.0);
+                self.header(ui);
+                ui.add_space(10.0);
+                ui.separator();
+
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin {
+                        left: 16,
+                        right: 16,
+                        top: 12,
+                        bottom: 12,
+                    })
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        self.card_mode(ui);
+                        ui.add_space(12.0);
+                        self.card_angle(ui);
+                        ui.add_space(12.0);
+                        self.card_ffb(ui);
+                        ui.add_space(12.0);
+                        // Le journal remplit la hauteur restante du panneau central.
+                        self.card_journal(ui);
+                    });
+            });
+
         self.about_window(ui.ctx());
     }
 }
@@ -480,6 +493,28 @@ fn angle_slider(ui: &mut egui::Ui, value: &mut u16, width: f32) -> egui::Respons
     );
 
     response
+}
+
+/// Centre horizontalement une rangée de widgets dans la largeur disponible.
+///
+/// `vertical_centered` ne centre pas un scope imbriqué (`horizontal`/`Frame`) :
+/// egui étend le cadre enfant à toute la largeur (cf. `layout.rs`) et le contenu
+/// reste collé à gauche. On mémorise donc la largeur réelle du contenu d'une
+/// frame sur l'autre (mémoire egui) et on décale le contenu de la moitié de
+/// l'espace restant. Une passe de dimensionnement avancerait le curseur vertical
+/// (`scope_dyn` → `advance_cursor_after_rect`) et décalerait la mise en page.
+fn centered_row(ui: &mut egui::Ui, id_salt: &str, mut add: impl FnMut(&mut egui::Ui)) {
+    let id = ui.make_persistent_id(id_salt);
+    let previous: f32 = ui.data(|data| data.get_temp(id)).unwrap_or(0.0);
+    let offset = ((ui.available_width() - previous) * 0.5).max(0.0);
+    let rect = ui
+        .horizontal(|ui| {
+            ui.add_space(offset);
+            add(ui);
+        })
+        .response
+        .rect;
+    ui.data_mut(|data| data.insert_temp(id, rect.width() - offset));
 }
 
 /// Ligne d'un contrôle : titre + sous-texte à gauche, interrupteur à droite.
