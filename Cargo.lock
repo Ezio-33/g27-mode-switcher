@@ -869,6 +869,7 @@ dependencies = [
  "clap",
  "eframe",
  "hidapi",
+ "libloading",
  "serde",
  "thiserror 2.0.18",
  "toml",

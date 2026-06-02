@@ -17,6 +17,9 @@ toml = "0.8"
 # les polices de corps par défaut d'egui (Cinzel est embarqué en plus).
 eframe = { version = "0.34", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
 hidapi = "2.6"
+# Chargement dynamique de vJoyInterface.dll (Phase 4) : app adaptative — si vJoy
+# est absent, la DLL ne se charge pas et le FFB reste désactivé proprement.
+libloading = "0.8"
 thiserror = "2.0.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

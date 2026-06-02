@@ -18,3 +18,4 @@ pub mod keymapper;
 pub mod range;
 pub mod report;
 pub mod switcher;
+pub mod vjoy;
