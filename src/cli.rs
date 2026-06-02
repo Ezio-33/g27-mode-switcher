@@ -81,10 +81,24 @@ enum Command {
 enum HidhideAction {
     /// Affiche la disponibilité de `HidHide`.
     Statut,
+    /// Active/désactive le masquage seul (test isolé de `SET_ACTIVE`).
+    Actif {
+        /// `on` active, `off` désactive.
+        etat: EtatActif,
+    },
     /// Masque le G27 réel au jeu (cet exécutable reste autorisé à le lire).
     Masquer,
     /// Démasque le G27 réel (de nouveau visible de toutes les applications).
     Demasquer,
+}
+
+/// État cible du masquage (sous-commande `hidhide actif`).
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum EtatActif {
+    /// Active le masquage.
+    On,
+    /// Désactive le masquage.
+    Off,
 }
 
 /// Actions de la sous-commande `config`.
@@ -554,6 +568,17 @@ fn run_hidhide(action: HidhideAction) -> ExitCode {
                 println!("{}", hidhide::AIDE_HIDHIDE);
             }
             ExitCode::SUCCESS
+        }
+        HidhideAction::Actif { etat } => {
+            let actif = matches!(etat, EtatActif::On);
+            issue_hidhide(
+                hidhide::definir_actif(actif),
+                if actif {
+                    "Masquage activé (SET_ACTIVE on)."
+                } else {
+                    "Masquage désactivé (SET_ACTIVE off)."
+                },
+            )
         }
         HidhideAction::Masquer => {
             let api = match hidapi::HidApi::new() {

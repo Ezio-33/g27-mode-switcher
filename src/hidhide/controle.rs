@@ -10,7 +10,8 @@ use std::ptr;
 use hidapi::HidApi;
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    OPEN_EXISTING,
 };
 use windows_sys::Win32::System::IO::DeviceIoControl;
 
@@ -19,52 +20,57 @@ use super::ErreurHidHide;
 /// Chemin du périphérique de contrôle HidHide.
 const PERIPHERIQUE: &str = r"\\.\HidHide";
 
-/// Type de périphérique IOCTL de HidHide.
-const TYPE_HIDHIDE: u32 = 0x8001;
+/// Type de périphérique IOCTL de HidHide (`IoControlDeviceType` du contrat partagé
+/// `Shared/HidHideIoctlContract.h`).
+const TYPE_HIDHIDE: u32 = 32769;
 /// Méthode `METHOD_BUFFERED` (winioctl.h).
 const METHOD_BUFFERED: u32 = 0;
-/// Accès `FILE_READ_DATA` (winnt.h).
+/// Accès `FILE_READ_DATA` (winnt.h). Le contrat HidHide utilise **cet accès pour
+/// tous les IOCTL**, y compris les `SET_*` (et non `READ | WRITE`) : c'était le bug
+/// — un accès à 3 changeait le code IOCTL, que le pilote rejetait alors avec
+/// `ERROR_INVALID_PARAMETER` (87).
 const FILE_READ_DATA: u32 = 0x0001;
-/// Accès `FILE_WRITE_DATA` (winnt.h).
-const FILE_WRITE_DATA: u32 = 0x0002;
 /// Droit d'accès générique en lecture (winnt.h).
 const GENERIC_READ: u32 = 0x8000_0000;
-/// Droit d'accès générique en écriture (winnt.h).
-const GENERIC_WRITE: u32 = 0x4000_0000;
 
 /// Construit un code IOCTL (macro `CTL_CODE` de winioctl.h).
 const fn ctl_code(type_peripherique: u32, fonction: u32, methode: u32, acces: u32) -> u32 {
     (type_peripherique << 16) | (acces << 14) | (fonction << 2) | methode
 }
 
-/// IOCTL « définir la liste blanche » (applications autorisées à voir le volant).
-const IOCTL_SET_WHITELIST: u32 = ctl_code(
-    TYPE_HIDHIDE,
-    2049,
-    METHOD_BUFFERED,
-    FILE_READ_DATA | FILE_WRITE_DATA,
-);
-/// IOCTL « définir la liste noire » (périphériques à cacher).
-const IOCTL_SET_BLACKLIST: u32 = ctl_code(
-    TYPE_HIDHIDE,
-    2051,
-    METHOD_BUFFERED,
-    FILE_READ_DATA | FILE_WRITE_DATA,
-);
-/// IOCTL « activer/désactiver le masquage ».
-const IOCTL_SET_ACTIVE: u32 = ctl_code(
-    TYPE_HIDHIDE,
-    2053,
-    METHOD_BUFFERED,
-    FILE_READ_DATA | FILE_WRITE_DATA,
-);
+/// IOCTL « définir la liste blanche » (0x8001_6004).
+const IOCTL_SET_WHITELIST: u32 = ctl_code(TYPE_HIDHIDE, 2049, METHOD_BUFFERED, FILE_READ_DATA);
+/// IOCTL « définir la liste noire » (0x8001_600C).
+const IOCTL_SET_BLACKLIST: u32 = ctl_code(TYPE_HIDHIDE, 2051, METHOD_BUFFERED, FILE_READ_DATA);
+/// IOCTL « activer/désactiver le masquage » (0x8001_6014).
+const IOCTL_SET_ACTIVE: u32 = ctl_code(TYPE_HIDHIDE, 2053, METHOD_BUFFERED, FILE_READ_DATA);
+
+// TODO (cycle de vie du masquage, amélioration future) : le contrat expose aussi un
+// masquage DE SESSION non persistant — ADD_SESSION_BLACKLIST (2056) /
+// CLR_SESSION_BLACKLIST (2057) — plus sûr que la liste noire permanente (qui laisse
+// le G27 caché après l'arrêt de l'app). Le client officiel ne les utilise pas ;
+// leur format de buffer reste à confirmer.
 
 /// Indique si le périphérique de contrôle HidHide peut être ouvert.
 pub(super) fn disponible() -> bool {
     Dispositif::ouvrir().is_ok()
 }
 
+/// Active (`true`) ou désactive (`false`) le masquage, sans toucher aux listes.
+///
+/// Permet de tester `SET_ACTIVE` en isolation (validation des codes IOCTL).
+pub(super) fn definir_actif(actif: bool) -> Result<(), ErreurHidHide> {
+    Dispositif::ouvrir()?.definir_actif(actif)
+}
+
 /// Masque le G27 natif : liste blanche = notre exe, liste noire = le G27, actif.
+///
+// TODO (points 4/5, à finaliser après validation du toggle SET_ACTIVE) :
+// - liste blanche : convertir le chemin DOS de l'exe en chemin volume
+//   (`\Device\HarddiskVolumeX\…`) comme `Volume.cpp::FileNameToFullImageName`,
+//   sinon notre process perd l'accès au G27 une fois le masquage actif ;
+// - liste noire : identifier le G27 par son device instance path SetupAPI
+//   (`HID\VID_046D&PID_C29B&…\…`), et non par le chemin d'interface hidapi.
 pub(super) fn masquer_g27(api: &HidApi) -> Result<(), ErreurHidHide> {
     let exe = std::env::current_exe().map_err(|erreur| ErreurHidHide::Io(erreur.to_string()))?;
     let info = crate::hid::find_native_g27(api).map_err(|_| ErreurHidHide::G27Introuvable)?;
@@ -83,8 +89,7 @@ pub(super) fn masquer_g27(api: &HidApi) -> Result<(), ErreurHidHide> {
 
 /// Désactive le masquage HidHide.
 pub(super) fn demasquer() -> Result<(), ErreurHidHide> {
-    let dispositif = Dispositif::ouvrir()?;
-    dispositif.definir_actif(false)
+    definir_actif(false)
 }
 
 /// Handle ouvert sur le périphérique de contrôle HidHide (fermé via `Drop`).
@@ -98,11 +103,11 @@ impl Dispositif {
         let handle = unsafe {
             CreateFileW(
                 chemin.as_ptr(),
-                GENERIC_READ | GENERIC_WRITE,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 ptr::null(),
                 OPEN_EXISTING,
-                0,
+                FILE_ATTRIBUTE_NORMAL,
                 ptr::null_mut(),
             )
         };
@@ -177,14 +182,13 @@ impl Drop for Dispositif {
 /// Encode une liste de chaînes UTF-16 (non terminées) en `REG_MULTI_SZ` (octets).
 fn multi_sz(entrees: &[Vec<u16>]) -> Vec<u8> {
     let mut unites: Vec<u16> = Vec::new();
+    // Format identique à `Utils.cpp::StringListToMultiString` : chaque chaîne
+    // suivie d'un nul, puis un nul final (liste vide → un seul nul).
     for entree in entrees {
         unites.extend_from_slice(entree);
         unites.push(0);
     }
-    unites.push(0); // terminateur final de la liste
-    if unites.len() == 1 {
-        unites.push(0); // liste vide → double nul
-    }
+    unites.push(0);
     unites
         .iter()
         .flat_map(|unite| unite.to_le_bytes())

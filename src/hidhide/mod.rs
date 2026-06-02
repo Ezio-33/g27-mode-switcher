@@ -87,6 +87,25 @@ pub fn demasquer() -> Result<(), ErreurHidHide> {
     }
 }
 
+/// Active/désactive le masquage **sans toucher aux listes** (test isolé de
+/// `SET_ACTIVE`, pour valider les codes IOCTL).
+///
+/// # Errors
+///
+/// [`ErreurHidHide::Indisponible`] si HidHide n'est pas pilotable, ou
+/// [`ErreurHidHide::Io`] en cas d'échec d'appel système.
+pub fn definir_actif(actif: bool) -> Result<(), ErreurHidHide> {
+    #[cfg(windows)]
+    {
+        controle::definir_actif(actif)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = actif;
+        Err(ErreurHidHide::Indisponible)
+    }
+}
+
 /// Déduit le **chemin d'instance** d'un périphérique (`HID\VID_…\…`) à partir de
 /// son **chemin d'interface** hidapi (`\\?\HID#VID_…#…#{guid}`).
 ///
