@@ -15,6 +15,7 @@ pub mod device;
 pub mod entree;
 pub mod feeder;
 pub mod hid;
+pub mod hidhide;
 pub mod keymapper;
 pub mod range;
 pub mod report;

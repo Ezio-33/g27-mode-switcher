@@ -8,7 +8,7 @@ use tracing_subscriber::EnvFilter;
 use g27_mode_switcher::entree::{self, EntreesG27, LecteurG27};
 use g27_mode_switcher::feeder::Feeder;
 use g27_mode_switcher::keymapper::{self, Bouton, EtatBoutons};
-use g27_mode_switcher::{autocenter, config, hid, range, switcher};
+use g27_mode_switcher::{autocenter, config, hid, hidhide, range, switcher};
 
 /// Bascule un volant Logitech G27 vers son mode natif, sans pilote propriétaire.
 #[derive(Debug, Parser)]
@@ -68,6 +68,23 @@ enum Command {
         #[arg(long, default_value_t = 1)]
         id: u32,
     },
+    /// Masque ou démasque le G27 réel au jeu via `HidHide` (debug FFB).
+    Hidhide {
+        /// Action à effectuer.
+        #[command(subcommand)]
+        action: HidhideAction,
+    },
+}
+
+/// Actions de la sous-commande `hidhide`.
+#[derive(Debug, Clone, Copy, Subcommand)]
+enum HidhideAction {
+    /// Affiche la disponibilité de `HidHide`.
+    Statut,
+    /// Masque le G27 réel au jeu (cet exécutable reste autorisé à le lire).
+    Masquer,
+    /// Démasque le G27 réel (de nouveau visible de toutes les applications).
+    Demasquer,
 }
 
 /// Actions de la sous-commande `config`.
@@ -141,6 +158,7 @@ fn dispatch(command: Command, config: config::Config) -> ExitCode {
         Command::Boutons => run_boutons(),
         Command::Entrees => run_entrees(),
         Command::Feeder { id } => run_feeder(id),
+        Command::Hidhide { action } => run_hidhide(action),
     }
 }
 
@@ -517,6 +535,56 @@ fn run_feeder(id: u32) -> ExitCode {
             loop {
                 std::thread::park();
             }
+        }
+        Err(erreur) => {
+            eprintln!("Erreur : {erreur}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Masque/démasque le G27 réel via `HidHide`, ou affiche sa disponibilité.
+fn run_hidhide(action: HidhideAction) -> ExitCode {
+    match action {
+        HidhideAction::Statut => {
+            if hidhide::disponible() {
+                println!("HidHide est disponible et pilotable.");
+            } else {
+                println!("HidHide est indisponible.");
+                println!("{}", hidhide::AIDE_HIDHIDE);
+            }
+            ExitCode::SUCCESS
+        }
+        HidhideAction::Masquer => {
+            let api = match hidapi::HidApi::new() {
+                Ok(api) => api,
+                Err(erreur) => {
+                    eprintln!("Erreur : accès HID impossible : {erreur}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            issue_hidhide(
+                hidhide::masquer_g27(&api),
+                "G27 masqué au jeu. Cet exécutable reste autorisé à le lire.",
+            )
+        }
+        HidhideAction::Demasquer => issue_hidhide(
+            hidhide::demasquer(),
+            "G27 démasqué (de nouveau visible de toutes les applications).",
+        ),
+    }
+}
+
+/// Rapporte l'issue d'une opération `HidHide` (succès, aide si indisponible).
+fn issue_hidhide(resultat: Result<(), hidhide::ErreurHidHide>, succes: &str) -> ExitCode {
+    match resultat {
+        Ok(()) => {
+            println!("{succes}");
+            ExitCode::SUCCESS
+        }
+        Err(hidhide::ErreurHidHide::Indisponible) => {
+            eprintln!("{}", hidhide::AIDE_HIDHIDE);
+            ExitCode::FAILURE
         }
         Err(erreur) => {
             eprintln!("Erreur : {erreur}");
