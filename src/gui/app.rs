@@ -275,8 +275,8 @@ impl App {
             section_label(ui, "RETOUR DE FORCE");
             ui.add_space(10.0);
 
-            // Autocentrage matériel : la désactivation est fonctionnelle ; la
-            // réactivation (off→on) est journalisée comme prévue en v0.3.0.
+            // Autocentrage matériel : désactivation et réactivation (pleine
+            // force) sont toutes deux fonctionnelles en direct.
             let autocenter_on = !self.autocenter_disabled;
             let sub = if autocenter_on {
                 "Actif — seule force de centrage sans retour de force dynamique"
@@ -627,12 +627,13 @@ fn journal_for_op(report: OpReport) -> (LineKind, String) {
             LineKind::Success,
             format!("Angle de rotation réglé sur {degrees}°."),
         ),
-        (OpKind::DisableAutocenter, Ok(())) => {
-            (LineKind::Success, "Autocentrage matériel désactivé.".to_owned())
-        }
-        (OpKind::EnableAutocenter, _) => (
-            LineKind::Info,
-            "Réactivation paramétrable de l'autocentrage prévue en v0.3.0 — rebranchez le volant pour la rétablir.".to_owned(),
+        (OpKind::DisableAutocenter, Ok(())) => (
+            LineKind::Success,
+            "Autocentrage matériel désactivé.".to_owned(),
+        ),
+        (OpKind::EnableAutocenter, Ok(())) => (
+            LineKind::Success,
+            "Autocentrage matériel réactivé (pleine force).".to_owned(),
         ),
         (kind, Err(error)) => (
             LineKind::Error,

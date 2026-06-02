@@ -242,7 +242,9 @@ fn handle_command(api: &mut hidapi::HidApi, evt_tx: &Sender<Event>, command: Com
         },
         Command::SetAutocenter { enable: true } => OpReport {
             kind: OpKind::EnableAutocenter,
-            result: Err(OpError::Unsupported),
+            result: autocenter::enable_autocenter_with_api(api)
+                .map(|_| ())
+                .map_err(|error| OpError::from_autocenter(&error)),
         },
         Command::SetAutocenter { enable: false } => OpReport {
             kind: OpKind::DisableAutocenter,

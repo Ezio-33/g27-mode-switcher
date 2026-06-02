@@ -85,7 +85,7 @@ enum ConfigAction {
 enum AutocenterState {
     /// Désactive l'autocentrage matériel.
     Off,
-    /// Réactive l'autocentrage (réglage paramétrable prévu en v0.3.0).
+    /// Réactive l'autocentrage matériel à pleine force.
     On,
 }
 
@@ -309,26 +309,29 @@ fn run_set_range(degrees: u16) -> ExitCode {
     }
 }
 
-/// Active/désactive l'autocentrage matériel (seule la désactivation est gérée).
+/// Désactive (`off`) ou réactive (`on`) l'autocentrage matériel du G27 natif.
 fn run_set_autocenter(state: AutocenterState) -> ExitCode {
-    if matches!(state, AutocenterState::On) {
-        eprintln!(
-            "La réactivation paramétrable de l'autocentrage arrivera en v0.3.0. (L'autocentrage se réactive de toute façon au rebranchement du volant.)"
-        );
-        return ExitCode::FAILURE;
-    }
-
-    match autocenter::disable_autocenter() {
+    let resultat = match state {
+        AutocenterState::Off => autocenter::disable_autocenter(),
+        AutocenterState::On => autocenter::enable_autocenter(),
+    };
+    match resultat {
         Ok(outcome) => {
-            println!(
-                "Autocentrage matériel désactivé pour le {outcome}. Sans couche FFB active, le volant n'aura plus de force de centrage.",
-                outcome = outcome.device
-            );
+            match state {
+                AutocenterState::Off => println!(
+                    "Autocentrage matériel désactivé pour le {}. Sans couche FFB active, le volant n'aura plus de force de centrage.",
+                    outcome.device
+                ),
+                AutocenterState::On => println!(
+                    "Autocentrage matériel réactivé (pleine force) pour le {}.",
+                    outcome.device
+                ),
+            }
             ExitCode::SUCCESS
         }
         Err(autocenter::Error::NotNative) => {
             eprintln!(
-                "Le G27 est en mode compatibilité : la désactivation n'a aucun effet. Lancez « switch » d'abord."
+                "Le G27 est en mode compatibilité : la commande n'a aucun effet. Lancez « switch » d'abord."
             );
             ExitCode::FAILURE
         }
@@ -337,7 +340,7 @@ fn run_set_autocenter(state: AutocenterState) -> ExitCode {
             ExitCode::FAILURE
         }
         Err(error) => {
-            eprintln!("Échec de la désactivation de l'autocentrage : {error}");
+            eprintln!("Échec de la commande d'autocentrage : {error}");
             ExitCode::FAILURE
         }
     }
