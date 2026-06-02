@@ -10,14 +10,20 @@
 //! sous Windows avec vJoy installé ; ailleurs, le chargement renvoie une erreur.
 #![allow(unsafe_code)]
 
+mod decouverte;
 mod position;
+#[cfg(windows)]
+mod registre;
 
+use std::path::PathBuf;
+
+pub use decouverte::{Recherche, rechercher_dll};
 pub use position::JoystickPositionV2;
 
 use libloading::{Library, Symbol};
 
-/// Nom de la DLL d'interface vJoy (recherchée dans le `PATH` / dossier du binaire).
-const NOM_DLL: &str = "vJoyInterface.dll";
+/// Aide affichée quand `vJoyInterface.dll` est introuvable (CLI et GUI).
+pub const AIDE_VJOY_INTROUVABLE: &str = "vJoyInterface.dll introuvable. Le retour de force nécessite vJoy (version x64).\nEmplacement attendu : C:\\Program Files\\vJoy\\x64\\vJoyInterface.dll\nInstallez vJoy (x64), ou copiez vJoyInterface.dll à côté de cet exécutable.";
 
 /// Signatures C des fonctions vJoy utilisées (ABI C de la plateforme).
 type FnDrapeau = unsafe extern "C" fn() -> i32;
@@ -29,12 +35,27 @@ type FnMaj = unsafe extern "C" fn(u32, *mut JoystickPositionV2) -> i32;
 /// Erreur de liaison à vJoy.
 #[derive(Debug, thiserror::Error)]
 pub enum ErreurVjoy {
-    /// La DLL vJoy est introuvable ou illisible (vJoy non installé).
-    #[error("vJoyInterface.dll introuvable ou illisible : {0}")]
+    /// La DLL vJoy n'a été trouvée à aucun emplacement (message pédagogique
+    /// complet, suivi de la liste des chemins testés).
+    #[error("{0}")]
+    Introuvable(String),
+    /// La DLL a été trouvée mais n'a pas pu être chargée.
+    #[error("vJoyInterface.dll trouvée mais illisible : {0}")]
     Chargement(libloading::Error),
     /// Un symbole attendu est absent de la DLL.
     #[error("symbole vJoy manquant : {0}")]
     Symbole(libloading::Error),
+}
+
+/// Compose l'erreur « introuvable » : aide pédagogique + chemins testés.
+fn erreur_introuvable(testes: &[PathBuf]) -> ErreurVjoy {
+    let mut message = String::from(AIDE_VJOY_INTROUVABLE);
+    message.push_str("\nChemins testés :");
+    for chemin in testes {
+        message.push_str("\n  - ");
+        message.push_str(&chemin.display().to_string());
+    }
+    ErreurVjoy::Introuvable(message)
 }
 
 /// Statut d'un device vJoy (`GetVJDStatus`).
@@ -79,16 +100,22 @@ pub struct Vjoy {
 }
 
 impl Vjoy {
-    /// Charge `vJoyInterface.dll` et résout les symboles nécessaires.
+    /// Recherche `vJoyInterface.dll` (cf. [`rechercher_dll`]) puis la charge et
+    /// résout les symboles nécessaires.
     ///
     /// # Errors
     ///
-    /// [`ErreurVjoy::Chargement`] si la DLL est absente (vJoy non installé),
+    /// [`ErreurVjoy::Introuvable`] si la DLL n'est trouvée nulle part (avec aide
+    /// et chemins testés), [`ErreurVjoy::Chargement`] si elle est illisible,
     /// [`ErreurVjoy::Symbole`] si un symbole attendu manque.
     pub fn charger() -> Result<Self, ErreurVjoy> {
-        // SAFETY: chargement d'une DLL par nom ; libloading renvoie une erreur si
-        // elle est absente ou invalide (pas de comportement indéfini ici).
-        let lib = unsafe { Library::new(NOM_DLL) }.map_err(ErreurVjoy::Chargement)?;
+        let recherche = rechercher_dll();
+        let Some(chemin) = recherche.trouve else {
+            return Err(erreur_introuvable(&recherche.testes));
+        };
+        // SAFETY: chargement d'une DLL par chemin complet résolu ; libloading
+        // renvoie une erreur si elle est invalide (pas de comportement indéfini).
+        let lib = unsafe { Library::new(&chemin) }.map_err(ErreurVjoy::Chargement)?;
 
         let enabled = *charger_symbole::<FnDrapeau>(&lib, b"vJoyEnabled\0")?;
         let version = *charger_symbole::<FnVersion>(&lib, b"GetvJoyVersion\0")?;
