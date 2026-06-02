@@ -6,6 +6,7 @@ use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
 
 use g27_mode_switcher::entree::{self, EntreesG27, LecteurG27};
+use g27_mode_switcher::feeder::Feeder;
 use g27_mode_switcher::keymapper::{self, Bouton, EtatBoutons};
 use g27_mode_switcher::{autocenter, config, hid, range, switcher};
 
@@ -61,6 +62,12 @@ enum Command {
     Boutons,
     /// Lit en direct les entrées complètes du G27 (axes + boutons, debug feeder vJoy).
     Entrees,
+    /// Alimente un device vJoy avec les entrées du G27 (Ctrl+C pour arrêter).
+    Feeder {
+        /// Identifiant du device vJoy à alimenter (1–16).
+        #[arg(long, default_value_t = 1)]
+        id: u32,
+    },
 }
 
 /// Actions de la sous-commande `config`.
@@ -133,6 +140,7 @@ fn dispatch(command: Command, config: config::Config) -> ExitCode {
         Command::Config { action } => run_config(action, config),
         Command::Boutons => run_boutons(),
         Command::Entrees => run_entrees(),
+        Command::Feeder { id } => run_feeder(id),
     }
 }
 
@@ -497,6 +505,24 @@ fn format_entrees(rapport: &[u8], entrees: EntreesG27) -> String {
         embr = entrees.embrayage,
         chapeau = entrees.chapeau,
     )
+}
+
+/// Démarre le feeder vJoy et le maintient actif jusqu'à interruption (Ctrl+C).
+fn run_feeder(id: u32) -> ExitCode {
+    println!("Alimentation du device vJoy n°{id} avec les entrées du G27 (Ctrl+C pour arrêter)...");
+    match Feeder::demarrer(id) {
+        Ok(_feeder) => {
+            println!("Feeder actif. Vérifiez les axes et boutons dans vJoy Monitor.");
+            // Maintient le feeder vivant ; le processus se termine sur Ctrl+C.
+            loop {
+                std::thread::park();
+            }
+        }
+        Err(erreur) => {
+            eprintln!("Erreur : {erreur}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// Modifie une clé de configuration puis enregistre le fichier.
