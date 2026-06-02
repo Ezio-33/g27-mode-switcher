@@ -12,13 +12,11 @@
 //! injectées **en plus**.
 
 mod bouton;
-mod lecteur;
 mod mappage;
 mod rapport;
 mod touche;
 
 pub use bouton::Bouton;
-pub use lecteur::{ErreurLecture, LecteurBoutons};
 pub use mappage::{Affectation, Mappage, ModeBouton};
 pub use rapport::{OCTET_DEBUT_BOUTONS, boutons_depuis_rapport};
 pub use touche::Touche;

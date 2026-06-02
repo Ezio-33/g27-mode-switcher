@@ -1,19 +1,18 @@
-//! Lecture des boutons du G27 natif via hidapi (non bloquante).
+//! Lecture des rapports d'entrée du G27 natif via hidapi (non bloquante).
 //!
-//! Ce lecteur ouvre l'interface HID du G27 en mode natif et lit ses rapports
-//! d'entrée. La lecture est **non exclusive** : le jeu continue de voir les
-//! boutons natifs en parallèle. Réutilisé par la commande de debug `boutons` et
-//! par la boucle d'injection clavier de la session.
+//! Ouvre l'interface HID du G27 en mode natif et lit ses rapports d'entrée bruts.
+//! La lecture est **non exclusive** : le jeu (ou un device vJoy alimenté) continue
+//! de voir le volant en parallèle. Le décodage des rapports (boutons mappables
+//! côté `keymapper`, entrées complètes côté feeder vJoy) est laissé à l'appelant.
 
 use hidapi::{HidApi, HidDevice};
 
-use super::{EtatBoutons, boutons_depuis_rapport};
 use crate::hid::{self, NativeLookup};
 
 /// Taille maximale d'un rapport d'entrée lu (octets).
 const TAILLE_RAPPORT: usize = 16;
 
-/// Erreurs de lecture des boutons du G27.
+/// Erreurs de lecture des entrées du G27.
 #[derive(Debug, thiserror::Error)]
 pub enum ErreurLecture {
     /// Aucun G27 détecté.
@@ -30,14 +29,14 @@ pub enum ErreurLecture {
     Lecture(hidapi::HidError),
 }
 
-/// Lecteur des boutons du G27 natif.
-pub struct LecteurBoutons {
+/// Lecteur des rapports d'entrée du G27 natif.
+pub struct LecteurG27 {
     device: HidDevice,
     tampon: [u8; TAILLE_RAPPORT],
     longueur: usize,
 }
 
-impl LecteurBoutons {
+impl LecteurG27 {
     /// Ouvre le G27 natif pour lecture.
     ///
     /// # Errors
@@ -80,11 +79,5 @@ impl LecteurBoutons {
     #[must_use]
     pub fn rapport(&self) -> &[u8] {
         &self.tampon[..self.longueur]
-    }
-
-    /// État des boutons mappables d'après le dernier rapport lu.
-    #[must_use]
-    pub fn etat(&self) -> EtatBoutons {
-        boutons_depuis_rapport(self.rapport())
     }
 }

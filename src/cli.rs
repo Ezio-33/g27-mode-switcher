@@ -5,7 +5,8 @@ use std::process::ExitCode;
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
 
-use g27_mode_switcher::keymapper::{self, Bouton, EtatBoutons, LecteurBoutons};
+use g27_mode_switcher::entree::{self, EntreesG27, LecteurG27};
+use g27_mode_switcher::keymapper::{self, Bouton, EtatBoutons};
 use g27_mode_switcher::{autocenter, config, hid, range, switcher};
 
 /// Bascule un volant Logitech G27 vers son mode natif, sans pilote propriétaire.
@@ -58,6 +59,8 @@ enum Command {
     },
     /// Lit en direct les boutons du G27 natif (debug/calibration du keymapper).
     Boutons,
+    /// Lit en direct les entrées complètes du G27 (axes + boutons, debug feeder vJoy).
+    Entrees,
 }
 
 /// Actions de la sous-commande `config`.
@@ -129,6 +132,7 @@ fn dispatch(command: Command, config: config::Config) -> ExitCode {
         Command::SetAutocenter { state } => run_set_autocenter(state),
         Command::Config { action } => run_config(action, config),
         Command::Boutons => run_boutons(),
+        Command::Entrees => run_entrees(),
     }
 }
 
@@ -373,19 +377,12 @@ fn run_config_get(config: &config::Config, cle: &str) -> ExitCode {
     }
 }
 
-/// Lit en direct les boutons du G27 (debug/calibration du keymapper).
+/// Ouvre le G27 natif et affiche en direct ses rapports (debug/calibration).
 ///
-/// Boucle jusqu'à interruption (Ctrl+C) : affiche, à chaque changement, le
-/// rapport HID brut, les bits armés (indices absolus depuis l'octet 0) et les
-/// rapports de boîte H reconnus. Sert à caler `OCTET_DEBUT_BOUTONS` sur le vrai
-/// volant.
-fn run_boutons() -> ExitCode {
-    println!("Lecture des boutons du G27 natif (Ctrl+C pour quitter).");
-    println!(
-        "Boutons HID attendus : 1re=13 2e=14 3e=15 4e=16 5e=17 6e=18 MA=23 ; lus au bit (n-1) depuis l'octet {}.",
-        keymapper::OCTET_DEBUT_BOUTONS
-    );
-    println!("Engagez chaque rapport pour repérer le bit qui s'arme.\n");
+/// Boucle jusqu'à interruption (Ctrl+C) ; `formatter` produit la ligne affichée à
+/// partir du rapport brut, et la ligne n'est réimprimée que lorsqu'elle change.
+fn boucle_lecture(en_tete: &str, formatter: impl Fn(&[u8]) -> String) -> ExitCode {
+    println!("{en_tete}\n");
 
     let api = match hidapi::HidApi::new() {
         Ok(api) => api,
@@ -394,7 +391,7 @@ fn run_boutons() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut lecteur = match LecteurBoutons::ouvrir(&api) {
+    let mut lecteur = match LecteurG27::ouvrir(&api) {
         Ok(lecteur) => lecteur,
         Err(erreur) => {
             eprintln!("Erreur : {erreur}");
@@ -406,7 +403,7 @@ fn run_boutons() -> ExitCode {
     loop {
         match lecteur.lire(200) {
             Ok(true) => {
-                let ligne = format_rapport(lecteur.rapport(), lecteur.etat());
+                let ligne = formatter(lecteur.rapport());
                 if ligne != derniere {
                     println!("{ligne}");
                     derniere = ligne;
@@ -419,6 +416,34 @@ fn run_boutons() -> ExitCode {
             }
         }
     }
+}
+
+/// Lit en direct les boutons du G27 (debug/calibration du keymapper).
+///
+/// Sert à caler `OCTET_DEBUT_BOUTONS` : affiche le rapport brut, les bits armés
+/// (indices absolus) et les rapports de boîte H reconnus.
+fn run_boutons() -> ExitCode {
+    let en_tete = format!(
+        "Lecture des boutons du G27 natif (Ctrl+C pour quitter).\n\
+         Boutons HID attendus : 1re=13 2e=14 3e=15 4e=16 5e=17 6e=18 MA=23 ; lus au bit (n-1) depuis l'octet {}.\n\
+         Engagez chaque rapport pour repérer le bit qui s'arme.",
+        keymapper::OCTET_DEBUT_BOUTONS
+    );
+    boucle_lecture(&en_tete, |rapport| {
+        format_rapport(rapport, keymapper::boutons_depuis_rapport(rapport))
+    })
+}
+
+/// Lit en direct les entrées complètes du G27 (debug/calibration du feeder vJoy).
+///
+/// Sert à caler les offsets d'axes : affiche le rapport brut et les valeurs
+/// décodées (volant, pédales, chapeau, boutons).
+fn run_entrees() -> ExitCode {
+    boucle_lecture(
+        "Lecture des entrées du G27 natif (Ctrl+C pour quitter).\n\
+         Bougez le volant et les pédales pour caler les offsets d'axes.",
+        |rapport| format_entrees(rapport, entree::entrees_depuis_rapport(rapport)),
+    )
 }
 
 /// Formate un rapport HID pour la calibration : hex, bits armés, rapports reconnus.
@@ -452,6 +477,23 @@ fn bits_armes(rapport: &[u8]) -> Vec<usize> {
         }
     }
     bits
+}
+
+/// Formate les entrées décodées du G27 pour la calibration des axes.
+fn format_entrees(rapport: &[u8], entrees: EntreesG27) -> String {
+    let hex: Vec<String> = rapport.iter().map(|octet| format!("{octet:02x}")).collect();
+    let boutons: Vec<u8> = (1u8..=24)
+        .filter(|numero| entrees.boutons.est_presse(*numero))
+        .collect();
+    format!(
+        "[{hex}]  volant={volant:5}  acc={acc:3}  frein={frein:3}  embr={embr:3}  chapeau={chapeau}  boutons={boutons:?}",
+        hex = hex.join(" "),
+        volant = entrees.volant,
+        acc = entrees.accelerateur,
+        frein = entrees.frein,
+        embr = entrees.embrayage,
+        chapeau = entrees.chapeau,
+    )
 }
 
 /// Modifie une clé de configuration puis enregistre le fichier.

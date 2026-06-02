@@ -12,6 +12,7 @@
 pub mod autocenter;
 pub mod config;
 pub mod device;
+pub mod entree;
 pub mod hid;
 pub mod keymapper;
 pub mod range;
