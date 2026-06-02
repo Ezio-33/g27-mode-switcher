@@ -8,7 +8,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::ptr;
 
 use hidapi::HidApi;
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
@@ -139,12 +139,30 @@ impl Dispositif {
             )
         };
         if ok == 0 {
+            // GetLastError doit être lu immédiatement après l'appel échoué.
+            // SAFETY: appel sans paramètre, juste après l'échec de DeviceIoControl.
+            let erreur = unsafe { GetLastError() };
             return Err(ErreurHidHide::Io(format!(
-                "DeviceIoControl a échoué (IOCTL {code:#x})"
+                "DeviceIoControl a échoué (IOCTL {code:#x}, {})",
+                libelle_erreur(erreur)
             )));
         }
         Ok(())
     }
+}
+
+/// Traduit un code `GetLastError` Win32 fréquent en libellé lisible.
+fn libelle_erreur(code: u32) -> String {
+    let nom = match code {
+        1 => "ERROR_INVALID_FUNCTION (code IOCTL non reconnu par le pilote)",
+        5 => "ERROR_ACCESS_DENIED",
+        6 => "ERROR_INVALID_HANDLE",
+        50 => "ERROR_NOT_SUPPORTED",
+        87 => "ERROR_INVALID_PARAMETER (format de buffer)",
+        122 => "ERROR_INSUFFICIENT_BUFFER",
+        _ => "voir code Win32",
+    };
+    format!("GetLastError {code} = {nom}")
 }
 
 impl Drop for Dispositif {
