@@ -32,6 +32,12 @@ const HAUTEUR_DEFAUT: f32 = 680.0;
 const VERBOSITE_DEFAUT: &str = "info";
 /// Niveaux de verbosité reconnus.
 const VERBOSITES: [&str; 3] = ["info", "debug", "trace"];
+/// Identifiant de device vJoy minimal.
+const ID_VJOY_MIN: u32 = 1;
+/// Identifiant de device vJoy maximal.
+const ID_VJOY_MAX: u32 = 16;
+/// Identifiant de device vJoy par défaut.
+const ID_VJOY_DEFAUT: u32 = 1;
 
 /// Configuration complète de l'application.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -43,6 +49,8 @@ pub struct Config {
     pub fenetre: Fenetre,
     /// Réglages de journalisation.
     pub journalisation: Journalisation,
+    /// Réglages du pont vJoy.
+    pub pont: Pont,
 }
 
 /// Réglages liés au volant (section `[volant]`).
@@ -77,6 +85,25 @@ pub struct Fenetre {
 pub struct Journalisation {
     /// Verbosité par défaut : `info`, `debug` ou `trace`.
     pub verbosite: String,
+}
+
+/// Réglages du pont vJoy (section `[pont]`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Pont {
+    /// Identifiant du device vJoy alimenté (1–16).
+    pub id_vjoy: u32,
+    /// Masquer le G27 réel au jeu au démarrage du pont.
+    pub masquer_g27_au_demarrage: bool,
+}
+
+impl Default for Pont {
+    fn default() -> Self {
+        Self {
+            id_vjoy: ID_VJOY_DEFAUT,
+            masquer_g27_au_demarrage: true,
+        }
+    }
 }
 
 impl Default for Volant {
@@ -179,6 +206,7 @@ impl Config {
         if self.fenetre.hauteur <= 0.0 {
             self.fenetre.hauteur = HAUTEUR_DEFAUT;
         }
+        self.pont.id_vjoy = self.pont.id_vjoy.clamp(ID_VJOY_MIN, ID_VJOY_MAX);
     }
 }
 

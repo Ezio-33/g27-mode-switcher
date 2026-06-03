@@ -4,14 +4,16 @@
 //! la CLI. La validation vit ici (et non côté CLI) pour rester l'unique source
 //! de vérité, réutilisée par tous les frontaux.
 
-use super::{ANGLE_MAX, ANGLE_MIN, Config, VERBOSITES};
+use super::{ANGLE_MAX, ANGLE_MIN, Config, ID_VJOY_MAX, ID_VJOY_MIN, VERBOSITES};
 
 /// Clés modifiables via `config set` / lisibles via `config get`.
-pub const CLES_MODIFIABLES: [&str; 4] = [
+pub const CLES_MODIFIABLES: [&str; 6] = [
     "angle_par_defaut",
     "appliquer_angle_au_switch",
     "desactiver_autocentrage_au_switch",
     "verbosite",
+    "id_vjoy",
+    "masquer_g27_au_demarrage",
 ];
 
 /// Erreur de lecture/écriture d'une clé de configuration.
@@ -19,7 +21,7 @@ pub const CLES_MODIFIABLES: [&str; 4] = [
 pub enum ErreurCle {
     /// La clé demandée n'existe pas.
     #[error(
-        "clé inconnue : « {0} ». Clés valides : angle_par_defaut, appliquer_angle_au_switch, desactiver_autocentrage_au_switch, verbosite"
+        "clé inconnue : « {0} ». Clés valides : angle_par_defaut, appliquer_angle_au_switch, desactiver_autocentrage_au_switch, verbosite, id_vjoy, masquer_g27_au_demarrage"
     )]
     Inconnue(String),
     /// La valeur fournie n'est pas valide pour cette clé.
@@ -46,6 +48,8 @@ impl Config {
                 Ok(self.volant.desactiver_autocentrage_au_switch.to_string())
             }
             "verbosite" => Ok(self.journalisation.verbosite.clone()),
+            "id_vjoy" => Ok(self.pont.id_vjoy.to_string()),
+            "masquer_g27_au_demarrage" => Ok(self.pont.masquer_g27_au_demarrage.to_string()),
             _ => Err(ErreurCle::Inconnue(cle.to_owned())),
         }
     }
@@ -77,6 +81,17 @@ impl Config {
                     return Err(invalide(cle, "info, debug ou trace"));
                 }
                 valeur.clone_into(&mut self.journalisation.verbosite);
+            }
+            "id_vjoy" => {
+                let id: u32 = valeur
+                    .parse()
+                    .ok()
+                    .filter(|identifiant| (ID_VJOY_MIN..=ID_VJOY_MAX).contains(identifiant))
+                    .ok_or_else(|| invalide(cle, "un entier entre 1 et 16"))?;
+                self.pont.id_vjoy = id;
+            }
+            "masquer_g27_au_demarrage" => {
+                self.pont.masquer_g27_au_demarrage = parse_bool(cle, valeur)?;
             }
             _ => return Err(ErreurCle::Inconnue(cle.to_owned())),
         }
@@ -155,5 +170,29 @@ mod tests {
         let mut config = Config::default();
         assert!(config.definir_cle("inexistante", "x").is_err());
         assert!(config.lire_cle("inexistante").is_err());
+    }
+
+    #[test]
+    fn id_vjoy_validation() {
+        let mut config = Config::default();
+        config.definir_cle("id_vjoy", "3").unwrap();
+        assert_eq!(config.pont.id_vjoy, 3);
+        assert_eq!(config.lire_cle("id_vjoy").unwrap(), "3");
+        assert!(config.definir_cle("id_vjoy", "0").is_err());
+        assert!(config.definir_cle("id_vjoy", "17").is_err());
+        assert!(config.definir_cle("id_vjoy", "x").is_err());
+    }
+
+    #[test]
+    fn masquage_au_demarrage_booleen() {
+        let mut config = Config::default();
+        config
+            .definir_cle("masquer_g27_au_demarrage", "non")
+            .unwrap();
+        assert!(!config.pont.masquer_g27_au_demarrage);
+        assert_eq!(
+            config.lire_cle("masquer_g27_au_demarrage").unwrap(),
+            "false"
+        );
     }
 }
