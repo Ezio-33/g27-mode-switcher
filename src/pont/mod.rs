@@ -46,14 +46,19 @@ pub struct Pont {
 impl Pont {
     /// Démarre le pont vers le device vJoy `id_vjoy`.
     ///
-    /// Si `masquer`, masque d'abord le G27 (notre process restant en liste
-    /// blanche) puis lance le feeder.
+    /// On acquiert le device vJoy (feeder) **avant** de masquer le G27 : ainsi un
+    /// échec vJoy ne laisse jamais le volant masqué. Si `masquer`, le G27 est
+    /// ensuite caché (notre process restant en liste blanche).
     ///
     /// # Errors
     ///
-    /// [`ErreurPont`] selon l'étape qui échoue. En cas d'échec **après** le
-    /// masquage, la garde est relâchée (démasquage) avant le retour de l'erreur.
+    /// [`ErreurPont`] selon l'étape qui échoue. Si le masquage échoue, le `feeder`
+    /// (local) est relâché — arrêt + RelinquishVJD — avant le retour de l'erreur.
     pub fn demarrer(id_vjoy: u32, masquer: bool) -> Result<Self, ErreurPont> {
+        // 1. Feeder d'abord (acquiert vJoy). En cas d'échec, rien n'a été masqué.
+        let feeder = Feeder::demarrer(id_vjoy).map_err(ErreurPont::Feeder)?;
+        // 2. Masquage ensuite. Si `MasquageGarde::activer` échoue, `feeder` (local)
+        //    est relâché ici → le feeder s'arrête et libère le device vJoy.
         let masquage = if masquer {
             let api =
                 hidapi::HidApi::new().map_err(|erreur| ErreurPont::Hid(erreur.to_string()))?;
@@ -61,9 +66,6 @@ impl Pont {
         } else {
             None
         };
-        // Si `Feeder::demarrer` échoue, `masquage` (local) est relâché ici → le G27
-        // est démasqué automatiquement avant de propager l'erreur.
-        let feeder = Feeder::demarrer(id_vjoy).map_err(ErreurPont::Feeder)?;
         Ok(Self {
             feeder,
             masquage,

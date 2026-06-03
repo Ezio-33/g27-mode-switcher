@@ -96,6 +96,7 @@ pub struct Vjoy {
     status: FnDevice,
     acquire: FnDevice,
     relinquish: FnLiberer,
+    reset: FnDevice,
     update: FnMaj,
 }
 
@@ -122,6 +123,7 @@ impl Vjoy {
         let status = *charger_symbole::<FnDevice>(&lib, b"GetVJDStatus\0")?;
         let acquire = *charger_symbole::<FnDevice>(&lib, b"AcquireVJD\0")?;
         let relinquish = *charger_symbole::<FnLiberer>(&lib, b"RelinquishVJD\0")?;
+        let reset = *charger_symbole::<FnDevice>(&lib, b"ResetVJD\0")?;
         let update = *charger_symbole::<FnMaj>(&lib, b"UpdateVJD\0")?;
 
         Ok(Self {
@@ -131,6 +133,7 @@ impl Vjoy {
             status,
             acquire,
             relinquish,
+            reset,
             update,
         })
     }
@@ -173,6 +176,14 @@ impl Vjoy {
     pub fn liberer(&self, id: u32) {
         // SAFETY: appel C avec un `UINT` ; ne renvoie rien.
         unsafe { (self.relinquish)(id) };
+    }
+
+    /// Réinitialise l'état du device vJoy `id` (axes/boutons au repos).
+    pub fn reinitialiser(&self, id: u32) {
+        // SAFETY: appel C avec un `UINT` ; renvoie un `BOOL` ignoré.
+        unsafe {
+            let _ = (self.reset)(id);
+        }
     }
 
     /// Pousse l'état complet `position` vers le device `id`. Renvoie `true` si

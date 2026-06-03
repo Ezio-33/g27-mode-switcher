@@ -113,13 +113,16 @@ fn boucle_feeder(id: u32, arret: &AtomicBool, tx: &Sender<Result<(), ErreurFeede
             return;
         }
     };
+    // Le device vJoy est acquis : la garde RAII le relâche (RelinquishVJD) au Drop,
+    // quel que soit le mode de sortie du worker — arrêt, erreur ou panique. Elle est
+    // déclarée juste après `vjoy` pour être droppée avant lui (la garde l'emprunte).
+    let _device = DeviceVjoyAcquis { vjoy: &vjoy, id };
 
     // Le `HidApi` doit rester vivant tant que le lecteur (et son device) est
     // utilisé : on le garde dans cette portée jusqu'à la fin de la boucle.
     let api = match hidapi::HidApi::new() {
         Ok(api) => api,
         Err(erreur) => {
-            vjoy.liberer(id);
             let _ = tx.send(Err(ErreurFeeder::Demarrage(io::Error::other(
                 erreur.to_string(),
             ))));
@@ -129,7 +132,6 @@ fn boucle_feeder(id: u32, arret: &AtomicBool, tx: &Sender<Result<(), ErreurFeede
     let mut lecteur = match LecteurG27::ouvrir(&api) {
         Ok(lecteur) => lecteur,
         Err(erreur) => {
-            vjoy.liberer(id);
             let _ = tx.send(Err(ErreurFeeder::Lecture(erreur)));
             return;
         }
@@ -149,19 +151,38 @@ fn boucle_feeder(id: u32, arret: &AtomicBool, tx: &Sender<Result<(), ErreurFeede
             Err(_) => break,
         }
     }
+    // `_device` (garde) est relâché ici, et sur tout retour ou panique ci-dessus.
+}
 
-    vjoy.liberer(id);
+/// Garde RAII : relâche le device vJoy (`RelinquishVJD`) au `Drop`, symétrique de
+/// l'acquisition, quel que soit le mode de sortie du worker.
+struct DeviceVjoyAcquis<'v> {
+    vjoy: &'v Vjoy,
+    id: u32,
+}
+
+impl Drop for DeviceVjoyAcquis<'_> {
+    fn drop(&mut self) {
+        self.vjoy.liberer(self.id);
+    }
 }
 
 /// Charge vJoy, vérifie sa disponibilité et acquiert le device `id`.
+///
+/// Si le device est resté en statut « possédé » (process précédent mal terminé),
+/// on le réinitialise et le relâche avant de tenter l'acquisition.
 fn preparer_vjoy(id: u32) -> Result<Vjoy, ErreurFeeder> {
     let vjoy = Vjoy::charger()?;
     if !vjoy.active() {
         return Err(ErreurFeeder::VjoyInactif);
     }
-    let statut = vjoy.statut(id);
-    if !matches!(statut, StatutVjd::Libre | StatutVjd::Possede) {
-        return Err(ErreurFeeder::DeviceIndisponible(id, statut));
+    match vjoy.statut(id) {
+        StatutVjd::Libre => {}
+        StatutVjd::Possede => {
+            vjoy.reinitialiser(id);
+            vjoy.liberer(id);
+        }
+        autre => return Err(ErreurFeeder::DeviceIndisponible(id, autre)),
     }
     if !vjoy.acquerir(id) {
         return Err(ErreurFeeder::AcquisitionEchouee(id));
