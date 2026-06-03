@@ -16,6 +16,8 @@
 
 #[cfg(windows)]
 mod controle;
+#[cfg(windows)]
+mod volume;
 
 /// Aide affichée quand HidHide est indisponible (CLI et GUI).
 pub const AIDE_HIDHIDE: &str = "HidHide est introuvable ou inactif. Pour cacher le volant réel au jeu (et éviter les doubles entrées), installez HidHide (x64) depuis https://github.com/nefarius/HidHide/releases.\nSans HidHide, le feeder vJoy fonctionne, mais le jeu peut voir à la fois le G27 et le device vJoy.";
@@ -118,6 +120,29 @@ pub fn instance_depuis_interface(interface: &str) -> Option<String> {
     let sans_guid = sans_prefixe.split("#{").next().unwrap_or(sans_prefixe);
     let instance = sans_guid.replace('#', "\\").to_uppercase();
     (!instance.is_empty()).then_some(instance)
+}
+
+/// Chemins d'instance de **toutes** les interfaces HID du G27 (compat ou natif).
+///
+/// Le volant expose plusieurs collections HID ; pour le masquer entièrement au
+/// jeu, on les met toutes en liste noire. Les doublons sont éliminés.
+#[must_use]
+pub fn instances_g27(api: &hidapi::HidApi) -> Vec<String> {
+    let mut instances = std::collections::BTreeSet::new();
+    for info in api.device_list() {
+        let est_g27 = info.vendor_id() == crate::hid::LOGITECH_VENDOR_ID
+            && matches!(
+                info.product_id(),
+                crate::hid::G27_COMPAT_PRODUCT_ID | crate::hid::G27_NATIVE_PRODUCT_ID
+            );
+        if est_g27
+            && let Ok(interface) = info.path().to_str()
+            && let Some(instance) = instance_depuis_interface(interface)
+        {
+            instances.insert(instance);
+        }
+    }
+    instances.into_iter().collect()
 }
 
 #[cfg(test)]

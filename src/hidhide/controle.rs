@@ -63,33 +63,38 @@ pub(super) fn definir_actif(actif: bool) -> Result<(), ErreurHidHide> {
     Dispositif::ouvrir()?.definir_actif(actif)
 }
 
-/// Masque le G27 natif : liste blanche = notre exe, liste noire = le G27, actif.
-///
-// TODO (points 4/5, à finaliser après validation du toggle SET_ACTIVE) :
-// - liste blanche : convertir le chemin DOS de l'exe en chemin volume
-//   (`\Device\HarddiskVolumeX\…`) comme `Volume.cpp::FileNameToFullImageName`,
-//   sinon notre process perd l'accès au G27 une fois le masquage actif ;
-// - liste noire : identifier le G27 par son device instance path SetupAPI
-//   (`HID\VID_046D&PID_C29B&…\…`), et non par le chemin d'interface hidapi.
+/// Masque le G27 : liste blanche = notre exe (chemin volume), liste noire =
+/// toutes les interfaces du volant, puis active le masquage.
 pub(super) fn masquer_g27(api: &HidApi) -> Result<(), ErreurHidHide> {
     let exe = std::env::current_exe().map_err(|erreur| ErreurHidHide::Io(erreur.to_string()))?;
-    let info = crate::hid::find_native_g27(api).map_err(|_| ErreurHidHide::G27Introuvable)?;
-    let interface = info
-        .path
-        .to_str()
-        .map_err(|_| ErreurHidHide::InstanceIllisible)?;
-    let instance =
-        super::instance_depuis_interface(interface).ok_or(ErreurHidHide::InstanceIllisible)?;
+    // Liste blanche : notre exe au format volume attendu par HidHide, sinon le
+    // feeder perdrait lui-même l'accès au G27 une fois le masquage actif.
+    let exe_volume = super::volume::chemin_volume(&exe).ok_or_else(|| {
+        ErreurHidHide::Io("conversion du chemin volume de l'exe impossible".to_owned())
+    })?;
+
+    // Liste noire : toutes les interfaces HID du volant (le jeu ne doit en voir
+    // aucune).
+    let instances = super::instances_g27(api);
+    if instances.is_empty() {
+        return Err(ErreurHidHide::G27Introuvable);
+    }
+    let noires: Vec<Vec<u16>> = instances
+        .iter()
+        .map(|instance| sans_nul(OsStr::new(instance)))
+        .collect();
 
     let dispositif = Dispositif::ouvrir()?;
-    dispositif.definir_liste(IOCTL_SET_WHITELIST, &[sans_nul(exe.as_os_str())])?;
-    dispositif.definir_liste(IOCTL_SET_BLACKLIST, &[sans_nul(OsStr::new(&instance))])?;
+    dispositif.definir_liste(IOCTL_SET_WHITELIST, &[sans_nul(OsStr::new(&exe_volume))])?;
+    dispositif.definir_liste(IOCTL_SET_BLACKLIST, &noires)?;
     dispositif.definir_actif(true)
 }
 
-/// Désactive le masquage HidHide.
+/// Désactive le masquage puis vide la liste noire (rien ne reste caché).
 pub(super) fn demasquer() -> Result<(), ErreurHidHide> {
-    definir_actif(false)
+    let dispositif = Dispositif::ouvrir()?;
+    dispositif.definir_actif(false)?;
+    dispositif.definir_liste(IOCTL_SET_BLACKLIST, &[])
 }
 
 /// Handle ouvert sur le périphérique de contrôle HidHide (fermé via `Drop`).

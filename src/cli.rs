@@ -590,7 +590,9 @@ fn run_hidhide(action: HidhideAction) -> ExitCode {
             };
             issue_hidhide(
                 hidhide::masquer_g27(&api),
-                "G27 masqué au jeu. Cet exécutable reste autorisé à le lire.",
+                "G27 masqué au jeu (cet exécutable reste autorisé à le lire).\n\
+                 Pensez à « hidhide demasquer » ensuite — le masquage persiste sinon.\n\
+                 En cas de blocage, l'app officielle « HidHide Configuration Client » peut tout réinitialiser.",
             )
         }
         HidhideAction::Demasquer => issue_hidhide(
