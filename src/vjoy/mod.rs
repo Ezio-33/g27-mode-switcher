@@ -156,7 +156,9 @@ impl Vjoy {
     #[must_use]
     pub fn statut(&self, id: u32) -> StatutVjd {
         // SAFETY: appel C avec un `UINT` ; renvoie un code `VjdStat`.
-        StatutVjd::depuis_code(unsafe { (self.status)(id) })
+        let statut = StatutVjd::depuis_code(unsafe { (self.status)(id) });
+        tracing::debug!("vJoy GetVJDStatus({id}) = {statut:?}");
+        statut
     }
 
     /// Indique si au moins un device vJoy (1–16) est configuré (statut ≠ absent).
@@ -169,21 +171,23 @@ impl Vjoy {
     #[must_use]
     pub fn acquerir(&self, id: u32) -> bool {
         // SAFETY: appel C avec un `UINT` ; renvoie un `BOOL`.
-        unsafe { (self.acquire)(id) != 0 }
+        let ok = unsafe { (self.acquire)(id) != 0 };
+        tracing::debug!("vJoy AcquireVJD({id}) = {ok}");
+        ok
     }
 
     /// Libère le device vJoy `id`.
     pub fn liberer(&self, id: u32) {
         // SAFETY: appel C avec un `UINT` ; ne renvoie rien.
         unsafe { (self.relinquish)(id) };
+        tracing::debug!("vJoy RelinquishVJD({id})");
     }
 
     /// Réinitialise l'état du device vJoy `id` (axes/boutons au repos).
     pub fn reinitialiser(&self, id: u32) {
-        // SAFETY: appel C avec un `UINT` ; renvoie un `BOOL` ignoré.
-        unsafe {
-            let _ = (self.reset)(id);
-        }
+        // SAFETY: appel C avec un `UINT` ; renvoie un `BOOL`.
+        let ok = unsafe { (self.reset)(id) != 0 };
+        tracing::debug!("vJoy ResetVJD({id}) = {ok}");
     }
 
     /// Pousse l'état complet `position` vers le device `id`. Renvoie `true` si

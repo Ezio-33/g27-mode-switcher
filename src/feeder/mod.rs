@@ -173,25 +173,30 @@ impl Drop for DeviceVjoyAcquis<'_> {
 
 /// Charge vJoy, vérifie sa disponibilité et acquiert le device `id`.
 ///
-/// Si le device est resté en statut « possédé » (process précédent mal terminé),
-/// on le réinitialise et le relâche avant de tenter l'acquisition.
+/// Acquisition robuste : si le premier `AcquireVJD` échoue (device laissé non-FREE
+/// par un process précédent), on récupère le device (`ResetVJD` + `RelinquishVJD`)
+/// puis on réessaie une fois.
 fn preparer_vjoy(id: u32) -> Result<Vjoy, ErreurFeeder> {
     let vjoy = Vjoy::charger()?;
     if !vjoy.active() {
         return Err(ErreurFeeder::VjoyInactif);
     }
-    match vjoy.statut(id) {
-        StatutVjd::Libre => {}
-        // Résidu d'un process précédent mal terminé (OWN ou BUSY) : on tente de
-        // récupérer le device (reset + relinquish) avant de l'acquérir.
-        StatutVjd::Possede | StatutVjd::Occupe => {
-            vjoy.reinitialiser(id);
-            vjoy.liberer(id);
-        }
-        autre => return Err(ErreurFeeder::DeviceIndisponible(id, autre)),
+    let statut = vjoy.statut(id);
+    if matches!(statut, StatutVjd::Absent | StatutVjd::Inconnu) {
+        return Err(ErreurFeeder::DeviceIndisponible(id, statut));
     }
+    // Premier essai d'acquisition ; si elle échoue (device laissé non-FREE par un
+    // process précédent), on récupère le device (reset + relinquish) puis on
+    // réessaie une fois.
     if !vjoy.acquerir(id) {
-        return Err(ErreurFeeder::AcquisitionEchouee(id));
+        tracing::debug!(
+            "vJoy : acquisition échouée, tentative de récupération (reset + relinquish)"
+        );
+        vjoy.reinitialiser(id);
+        vjoy.liberer(id);
+        if !vjoy.acquerir(id) {
+            return Err(ErreurFeeder::AcquisitionEchouee(id));
+        }
     }
     Ok(vjoy)
 }

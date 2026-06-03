@@ -132,11 +132,18 @@ impl MasquageGarde {
 
 impl Drop for MasquageGarde {
     fn drop(&mut self) {
-        if let Err(erreur) = demasquer() {
-            tracing::warn!(
-                %erreur,
-                "Échec du démasquage HidHide ; si le G27 reste caché, utilisez le HidHide Configuration Client."
-            );
+        // Exactement le même chemin que la commande `hidhide demasquer` : handle
+        // HidHide frais + SET_ACTIVE(false) + vidage de la liste noire.
+        match demasquer() {
+            Ok(()) => tracing::debug!("HidHide : G27 démasqué (Drop de la garde)"),
+            // Ne JAMAIS rester silencieux sur un échec de démasquage : message
+            // visible (l'erreur inclut le code IOCTL + GetLastError) + log erreur.
+            Err(erreur) => {
+                eprintln!(
+                    "ATTENTION : échec du démasquage du G27 : {erreur}\n  → lancez « g27-mode-switcher hidhide demasquer », ou réinitialisez via le HidHide Configuration Client."
+                );
+                tracing::error!(%erreur, "Échec du démasquage HidHide au Drop de la garde");
+            }
         }
     }
 }

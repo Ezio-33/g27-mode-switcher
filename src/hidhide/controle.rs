@@ -157,6 +157,7 @@ impl Dispositif {
                 libelle_erreur(erreur)
             )));
         }
+        tracing::debug!("HidHide IOCTL {code:#x} ({} octets) = OK", entree.len());
         Ok(())
     }
 }
