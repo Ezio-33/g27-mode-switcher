@@ -156,6 +156,12 @@ impl Vjoy {
         StatutVjd::depuis_code(unsafe { (self.status)(id) })
     }
 
+    /// Indique si au moins un device vJoy (1–16) est configuré (statut ≠ absent).
+    #[must_use]
+    pub fn un_device_configure(&self) -> bool {
+        (1..=16).any(|id| self.statut(id) != StatutVjd::Absent)
+    }
+
     /// Acquiert le device vJoy `id`. Renvoie `true` en cas de succès.
     #[must_use]
     pub fn acquerir(&self, id: u32) -> bool {

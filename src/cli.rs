@@ -8,7 +8,7 @@ use tracing_subscriber::EnvFilter;
 use g27_mode_switcher::entree::{self, EntreesG27, LecteurG27};
 use g27_mode_switcher::feeder::Feeder;
 use g27_mode_switcher::keymapper::{self, Bouton, EtatBoutons};
-use g27_mode_switcher::{autocenter, config, hid, hidhide, range, switcher};
+use g27_mode_switcher::{autocenter, config, hid, hidhide, pont, range, switcher};
 
 /// Bascule un volant Logitech G27 vers son mode natif, sans pilote propriétaire.
 #[derive(Debug, Parser)]
@@ -74,6 +74,19 @@ enum Command {
         #[command(subcommand)]
         action: HidhideAction,
     },
+    /// Pont vJoy : diagnostic des prérequis (vJoy + `HidHide`).
+    Pont {
+        /// Action à effectuer.
+        #[command(subcommand)]
+        action: PontAction,
+    },
+}
+
+/// Actions de la sous-commande `pont`.
+#[derive(Debug, Clone, Copy, Subcommand)]
+enum PontAction {
+    /// Affiche l'état des prérequis du pont (vJoy + `HidHide`).
+    Statut,
 }
 
 /// Actions de la sous-commande `hidhide`.
@@ -173,6 +186,7 @@ fn dispatch(command: Command, config: config::Config) -> ExitCode {
         Command::Entrees => run_entrees(),
         Command::Feeder { id } => run_feeder(id),
         Command::Hidhide { action } => run_hidhide(action),
+        Command::Pont { action } => run_pont(action),
     }
 }
 
@@ -617,6 +631,32 @@ fn issue_hidhide(resultat: Result<(), hidhide::ErreurHidHide>, succes: &str) -> 
             eprintln!("Erreur : {erreur}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Affiche le diagnostic des prérequis du pont (vJoy + `HidHide`).
+fn run_pont(action: PontAction) -> ExitCode {
+    match action {
+        PontAction::Statut => {
+            let prerequis = pont::detecter();
+            afficher_composant("vJoy", &prerequis.vjoy);
+            afficher_composant("HidHide", &prerequis.hidhide);
+            println!();
+            if prerequis.tout_disponible() {
+                println!("Prérequis du pont : OK — le pont peut démarrer.");
+            } else {
+                println!("Prérequis manquants — le pont ne peut pas démarrer.");
+            }
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+/// Affiche l'état d'un composant prérequis (disponible ou raison de l'absence).
+fn afficher_composant(nom: &str, composant: &pont::Composant) {
+    match composant.raison() {
+        None => println!("\u{2713} {nom} : disponible"),
+        Some(raison) => println!("\u{2717} {nom} : indisponible\n    {raison}"),
     }
 }
 

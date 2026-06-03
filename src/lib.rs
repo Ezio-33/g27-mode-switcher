@@ -17,6 +17,7 @@ pub mod feeder;
 pub mod hid;
 pub mod hidhide;
 pub mod keymapper;
+pub mod pont;
 pub mod range;
 pub mod report;
 pub mod switcher;
