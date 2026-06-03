@@ -163,6 +163,10 @@ struct DeviceVjoyAcquis<'v> {
 
 impl Drop for DeviceVjoyAcquis<'_> {
     fn drop(&mut self) {
+        // Réinitialiser puis relâcher : le device repart propre et libre, quel que
+        // soit le mode de sortie (le statut « Occupé » résiduel observé venait d'un
+        // RelinquishVJD non garanti).
+        self.vjoy.reinitialiser(self.id);
         self.vjoy.liberer(self.id);
     }
 }
@@ -178,7 +182,9 @@ fn preparer_vjoy(id: u32) -> Result<Vjoy, ErreurFeeder> {
     }
     match vjoy.statut(id) {
         StatutVjd::Libre => {}
-        StatutVjd::Possede => {
+        // Résidu d'un process précédent mal terminé (OWN ou BUSY) : on tente de
+        // récupérer le device (reset + relinquish) avant de l'acquérir.
+        StatutVjd::Possede | StatutVjd::Occupe => {
             vjoy.reinitialiser(id);
             vjoy.liberer(id);
         }
