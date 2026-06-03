@@ -108,6 +108,39 @@ pub fn definir_actif(actif: bool) -> Result<(), ErreurHidHide> {
     }
 }
 
+/// Garde RAII : masque le G27 à la création, le démasque au `Drop`.
+///
+/// Garantit le démasquage en cas de panique, d'erreur ou de sortie — **à condition
+/// que le `Drop` s'exécute**. Ne jamais court-circuiter la pile avec
+/// `std::process::exit` ou `abort`, qui sauteraient ce `Drop` et laisseraient le
+/// G27 caché.
+pub struct MasquageGarde {
+    _interne: (),
+}
+
+impl MasquageGarde {
+    /// Active le masquage du G27 ; le démasquage sera garanti au `Drop`.
+    ///
+    /// # Errors
+    ///
+    /// Voir [`masquer_g27`].
+    pub fn activer(api: &hidapi::HidApi) -> Result<Self, ErreurHidHide> {
+        masquer_g27(api)?;
+        Ok(Self { _interne: () })
+    }
+}
+
+impl Drop for MasquageGarde {
+    fn drop(&mut self) {
+        if let Err(erreur) = demasquer() {
+            tracing::warn!(
+                %erreur,
+                "Échec du démasquage HidHide ; si le G27 reste caché, utilisez le HidHide Configuration Client."
+            );
+        }
+    }
+}
+
 /// Déduit le **chemin d'instance** d'un périphérique (`HID\VID_…\…`) à partir de
 /// son **chemin d'interface** hidapi (`\\?\HID#VID_…#…#{guid}`).
 ///

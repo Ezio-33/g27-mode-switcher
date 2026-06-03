@@ -1,12 +1,13 @@
 //! Définition et exécution de l'interface en ligne de commande (clap).
 
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
 
 use g27_mode_switcher::entree::{self, EntreesG27, LecteurG27};
-use g27_mode_switcher::feeder::Feeder;
 use g27_mode_switcher::keymapper::{self, Bouton, EtatBoutons};
 use g27_mode_switcher::{autocenter, config, hid, hidhide, pont, range, switcher};
 
@@ -62,11 +63,14 @@ enum Command {
     Boutons,
     /// Lit en direct les entrées complètes du G27 (axes + boutons, debug feeder vJoy).
     Entrees,
-    /// Alimente un device vJoy avec les entrées du G27 (Ctrl+C pour arrêter).
+    /// Démarre le pont (feeder vJoy + masquage du G27). Ctrl+C pour arrêter.
     Feeder {
-        /// Identifiant du device vJoy à alimenter (1–16).
-        #[arg(long, default_value_t = 1)]
-        id: u32,
+        /// Device vJoy à alimenter (1–16). Défaut : `id_vjoy` de la config.
+        #[arg(long)]
+        id: Option<u32>,
+        /// Ne pas masquer le G27 au jeu (feeder seul).
+        #[arg(long)]
+        sans_masquage: bool,
     },
     /// Masque ou démasque le G27 réel au jeu via `HidHide` (debug FFB).
     Hidhide {
@@ -184,7 +188,7 @@ fn dispatch(command: Command, config: config::Config) -> ExitCode {
         Command::Config { action } => run_config(action, config),
         Command::Boutons => run_boutons(),
         Command::Entrees => run_entrees(),
-        Command::Feeder { id } => run_feeder(id),
+        Command::Feeder { id, sans_masquage } => run_feeder(id, sans_masquage),
         Command::Hidhide { action } => run_hidhide(action),
         Command::Pont { action } => run_pont(action),
     }
@@ -553,22 +557,71 @@ fn format_entrees(rapport: &[u8], entrees: EntreesG27) -> String {
     )
 }
 
-/// Démarre le feeder vJoy et le maintient actif jusqu'à interruption (Ctrl+C).
-fn run_feeder(id: u32) -> ExitCode {
-    println!("Alimentation du device vJoy n°{id} avec les entrées du G27 (Ctrl+C pour arrêter)...");
-    match Feeder::demarrer(id) {
-        Ok(_feeder) => {
-            println!("Feeder actif. Vérifiez les axes et boutons dans vJoy Monitor.");
-            // Maintient le feeder vivant ; le processus se termine sur Ctrl+C.
-            loop {
-                std::thread::park();
-            }
-        }
+/// Drapeau d'arrêt posé par le handler Ctrl+C, lu par la boucle d'attente.
+static ARRET_DEMANDE: AtomicBool = AtomicBool::new(false);
+
+/// Démarre le pont (feeder + masquage), puis attend Ctrl+C pour s'arrêter
+/// proprement (le `Drop` du `Pont` arrête le feeder puis démasque le G27).
+fn run_feeder(id: Option<u32>, sans_masquage: bool) -> ExitCode {
+    let config = config::Config::charger();
+    // `--id` est prioritaire sur la config ; idem `--sans-masquage`.
+    let id_vjoy = id.unwrap_or(config.pont.id_vjoy);
+    let masquer = !sans_masquage && config.pont.masquer_g27_au_demarrage;
+
+    let pont = match pont::Pont::demarrer(id_vjoy, masquer) {
+        Ok(pont) => pont,
         Err(erreur) => {
             eprintln!("Erreur : {erreur}");
-            ExitCode::FAILURE
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "Pont actif — device vJoy #{}, G27 {}.",
+        pont.id_vjoy(),
+        if pont.g27_masque() {
+            "masqué au jeu"
+        } else {
+            "visible"
+        }
+    );
+    println!("Ctrl+C pour arrêter (le G27 sera démasqué automatiquement).");
+
+    installer_handler_arret();
+    while !ARRET_DEMANDE.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(150));
+    }
+
+    println!("Arrêt du pont…");
+    drop(pont); // arrête le feeder PUIS démasque le G27 (ordre des champs du Pont).
+    println!("Pont arrêté, G27 démasqué.");
+    ExitCode::SUCCESS
+}
+
+/// Installe un handler d'arrêt (Ctrl+C / fermeture console) qui **pose seulement
+/// un drapeau**.
+///
+/// ⚠️ CONTRAT DE SÛRETÉ — le handler ne DOIT JAMAIS appeler `std::process::exit`
+/// ni `abort` : cela court-circuiterait les `Drop` et laisserait le G27 masqué.
+/// Il se contente de poser [`ARRET_DEMANDE`] ; la boucle d'attente le lit et
+/// retourne, ce qui déclenche le `Drop` du `Pont` (arrêt feeder + démasquage).
+#[allow(unsafe_code)]
+fn installer_handler_arret() {
+    #[cfg(windows)]
+    {
+        // SAFETY: enregistrement d'un handler console ; `handler_console` n'accède
+        // qu'à un `static` atomique et ne fait aucune allocation.
+        unsafe {
+            windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(handler_console), 1);
         }
     }
+}
+
+/// Handler console : pose le drapeau d'arrêt et signale l'événement comme géré.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+unsafe extern "system" fn handler_console(_type_evenement: u32) -> i32 {
+    ARRET_DEMANDE.store(true, Ordering::SeqCst);
+    1 // TRUE : événement géré, pas de terminaison par défaut.
 }
 
 /// Masque/démasque le G27 réel via `HidHide`, ou affiche sa disponibilité.
