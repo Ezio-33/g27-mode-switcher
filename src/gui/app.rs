@@ -6,6 +6,7 @@ use eframe::egui::{self, RichText, Stroke};
 use g27_mode_switcher::config::Config;
 use g27_mode_switcher::device::{Command, DeviceSession, Event, OpError, OpKind, OpReport, Status};
 
+use super::carte_pont::CartePont;
 use super::log::{self, LineKind, LogBuffer};
 use super::theme;
 
@@ -39,6 +40,7 @@ pub struct App {
     autocenter_disabled: bool,
     about_open: bool,
     config: Config,
+    carte_pont: CartePont,
 }
 
 impl App {
@@ -54,6 +56,7 @@ impl App {
             autocenter_disabled: config.volant.desactiver_autocentrage_au_switch,
             about_open: false,
             config,
+            carte_pont: CartePont::new(),
         }
     }
 
@@ -267,16 +270,18 @@ impl App {
         });
     }
 
-    /// Carte « Retour de force » : autocentrage (fonctionnel) + pont vJoy (à venir).
-    fn card_ffb(&mut self, ui: &mut egui::Ui) {
+    /// Carte « Autocentrage » : ressort de rappel matériel du G27 (mode natif).
+    ///
+    /// Distincte du pont vJoy. Le nom « Retour de force » est réservé au vrai FFB
+    /// dynamique (Phase 5).
+    fn card_autocentrage(&mut self, ui: &mut egui::Ui) {
         let is_native = self.status == Status::Native;
         theme::card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            section_label(ui, "RETOUR DE FORCE");
+            section_label(ui, "AUTOCENTRAGE");
             ui.add_space(10.0);
 
-            // Autocentrage matériel : désactivation et réactivation (pleine
-            // force) sont toutes deux fonctionnelles en direct.
+            // Désactivation et réactivation (pleine force) sont fonctionnelles en direct.
             let autocenter_on = !self.autocenter_disabled;
             let sub = if autocenter_on {
                 "Actif — seule force de centrage sans retour de force dynamique"
@@ -293,18 +298,6 @@ impl App {
                 });
                 self.persister_reglages();
             }
-
-            ui.add_space(12.0);
-            ui.separator();
-            ui.add_space(12.0);
-
-            // Pont retour de force vJoy : arrive en Phase 4/5, désactivé ici.
-            control_row(
-                ui,
-                "Retour de force (vJoy)",
-                "À venir (v0.3.0) — nécessite vJoy + HidHide",
-                |ui| toggle_switch(ui, false, false),
-            );
         });
     }
 
@@ -390,8 +383,12 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        // À la fermeture, on persiste la dernière géométrie de fenêtre (capturée
-        // à chaque frame) ainsi que les réglages courants.
+        // Sûreté : on arrête le pont AVANT tout le reste pour garantir le
+        // démasquage du G27 et la libération du device vJoy à la fermeture (croix).
+        // Le `Drop` du champ `carte_pont` en serait un dernier filet, mais on le
+        // fait ici explicitement et tôt.
+        self.carte_pont.arreter();
+        // Puis on persiste la dernière géométrie de fenêtre et les réglages.
         self.persister_reglages();
     }
 
@@ -434,7 +431,9 @@ impl eframe::App for App {
                         ui.add_space(12.0);
                         self.card_angle(ui);
                         ui.add_space(12.0);
-                        self.card_ffb(ui);
+                        self.card_autocentrage(ui);
+                        ui.add_space(12.0);
+                        self.carte_pont.afficher(ui, &mut self.config, &self.log);
                         ui.add_space(12.0);
                         // Le journal remplit la hauteur restante du panneau central.
                         self.card_journal(ui);

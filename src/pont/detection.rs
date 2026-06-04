@@ -56,7 +56,7 @@ pub fn detecter() -> Prerequis {
 
 /// Détecte vJoy : DLL chargeable, pilote actif, au moins un device configuré.
 fn detecter_vjoy() -> Composant {
-    match vjoy::Vjoy::charger() {
+    match vjoy::Vjoy::partagee() {
         Err(erreur) => Composant::Indisponible(erreur.to_string()),
         Ok(vjoy) if !vjoy.active() => Composant::Indisponible(
             "Le pilote vJoy est installé mais inactif. Activez-le (vJoyConf).".to_owned(),

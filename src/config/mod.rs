@@ -27,7 +27,7 @@ const ANGLE_DEFAUT: u16 = 900;
 /// Largeur par défaut de la fenêtre (px logiques).
 const LARGEUR_DEFAUT: f32 = 480.0;
 /// Hauteur par défaut de la fenêtre (px logiques).
-const HAUTEUR_DEFAUT: f32 = 680.0;
+const HAUTEUR_DEFAUT: f32 = 800.0;
 /// Niveau de verbosité par défaut.
 const VERBOSITE_DEFAUT: &str = "info";
 /// Niveaux de verbosité reconnus.
@@ -352,6 +352,6 @@ mod tests {
     fn geometrie_invalide_est_corrigee() {
         let config = depuis_toml("[fenetre]\nlargeur = 0.0\nhauteur = -5.0");
         assert!((config.fenetre.largeur - 480.0).abs() < f32::EPSILON);
-        assert!((config.fenetre.hauteur - 680.0).abs() < f32::EPSILON);
+        assert!((config.fenetre.hauteur - 800.0).abs() < f32::EPSILON);
     }
 }

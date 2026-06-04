@@ -16,6 +16,8 @@ mod position;
 mod registre;
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use decouverte::{Recherche, rechercher_dll};
 pub use position::JoystickPositionV2;
@@ -138,6 +140,31 @@ impl Vjoy {
         })
     }
 
+    /// Renvoie l'instance vJoy **partagée du process**, chargée une seule fois et
+    /// **jamais déchargée** ensuite.
+    ///
+    /// `vJoyInterface.dll` doit être chargée une seule fois pour toute la durée du
+    /// process : la charger/décharger en boucle (ex. détection périodique) laisse
+    /// derrière elle des ressources globales (classe de fenêtre du canal FFB) et
+    /// fragilise le pilote. Détection et feeder passent donc par cette instance
+    /// unique au lieu de [`charger`](Self::charger) répété.
+    ///
+    /// # Errors
+    ///
+    /// Voir [`charger`](Self::charger). L'échec n'est pas mémorisé : un appel
+    /// ultérieur réessaie (utile si vJoy est installé en cours d'exécution).
+    pub fn partagee() -> Result<&'static Self, ErreurVjoy> {
+        static VJOY: OnceLock<Vjoy> = OnceLock::new();
+        if let Some(vjoy) = VJOY.get() {
+            return Ok(vjoy);
+        }
+        // Chargé hors du `get_or_init` pour pouvoir propager l'erreur (et ne pas la
+        // mémoriser). En cas de course, l'instance déjà initialisée gagne et la
+        // nôtre est simplement abandonnée.
+        let vjoy = Self::charger()?;
+        Ok(VJOY.get_or_init(move || vjoy))
+    }
+
     /// Indique si le pilote vJoy est activé.
     #[must_use]
     pub fn active(&self) -> bool {
@@ -168,11 +195,24 @@ impl Vjoy {
     }
 
     /// Acquiert le device vJoy `id`. Renvoie `true` en cas de succès.
+    ///
+    /// Chaque appel est compté globalement et journalisé (numéro d'appel + thread).
+    /// vJoyInterface enregistre une classe de fenêtre (canal FFB) au **premier**
+    /// `AcquireVJD` du process et ne la désenregistre jamais : un 2ᵉ appel dans un
+    /// process long-vivant (GUI) échoue. Ce compteur sert à diagnostiquer toute
+    /// acquisition cachée (l'objectif est un seul appel par process).
     #[must_use]
     pub fn acquerir(&self, id: u32) -> bool {
+        static COMPTEUR_ACQUIRE: AtomicU64 = AtomicU64::new(0);
+        let appel = COMPTEUR_ACQUIRE.fetch_add(1, Ordering::Relaxed) + 1;
+        let thread = std::thread::current();
         // SAFETY: appel C avec un `UINT` ; renvoie un `BOOL`.
         let ok = unsafe { (self.acquire)(id) != 0 };
-        tracing::debug!("vJoy AcquireVJD({id}) = {ok}");
+        tracing::debug!(
+            "vJoy AcquireVJD({id}) = {ok} — appel global n°{appel} (thread « {} » {:?})",
+            thread.name().unwrap_or("?"),
+            thread.id()
+        );
         ok
     }
 

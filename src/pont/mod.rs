@@ -29,22 +29,26 @@ pub enum ErreurPont {
     Feeder(feeder::ErreurFeeder),
 }
 
-/// Pont actif : recopie G27 → vJoy + masquage du G27, avec démasquage garanti.
+/// Pont : recopie G27 → vJoy + masquage du G27, avec démasquage garanti.
+///
+/// Le device vJoy est acquis **une seule fois** (à la construction) et relâché au
+/// `Drop`. [`suspendre`](Pont::suspendre)/[`reprendre`](Pont::reprendre) ne font que
+/// basculer l'alimentation des axes et le masquage, **sans** ré-acquérir vJoy : un
+/// 2ᵉ `AcquireVJD` dans un process long-vivant (GUI) échouerait (cf. [`crate::feeder`]).
 pub struct Pont {
     // ⚠️ ORDRE DE DÉCLARATION INTENTIONNEL : les champs d'une struct sont droppés
     // dans l'ordre de déclaration (haut → bas). `feeder` AVANT `masquage` garantit
     // qu'au `Drop` on arrête d'abord le feeder (stoppe la lecture, libère le device
     // vJoy) PUIS on démasque le G27. Ne pas réordonner sans tenir compte de ça.
-    //
-    // `feeder` n'est jamais relu : il est conservé uniquement pour son `Drop`.
-    #[allow(dead_code)]
     feeder: Feeder,
     masquage: Option<MasquageGarde>,
+    /// Préférence de masquage, mémorisée pour [`reprendre`](Pont::reprendre).
+    masquer: bool,
     id_vjoy: u32,
 }
 
 impl Pont {
-    /// Démarre le pont vers le device vJoy `id_vjoy`.
+    /// Démarre le pont vers le device vJoy `id_vjoy` (acquisition + alimentation).
     ///
     /// On acquiert le device vJoy (feeder) **avant** de masquer le G27 : ainsi un
     /// échec vJoy ne laisse jamais le volant masqué. Si `masquer`, le G27 est
@@ -58,17 +62,36 @@ impl Pont {
         let (feeder, masquage) = assembler(
             masquer,
             || Feeder::demarrer(id_vjoy).map_err(ErreurPont::Feeder),
-            || {
-                let api =
-                    hidapi::HidApi::new().map_err(|erreur| ErreurPont::Hid(erreur.to_string()))?;
-                MasquageGarde::activer(&api).map_err(ErreurPont::Masquage)
-            },
+            masquer_g27,
         )?;
         Ok(Self {
             feeder,
             masquage,
+            masquer,
             id_vjoy,
         })
+    }
+
+    /// Met le pont en pause : coupe l'alimentation des axes et démasque le G27. Le
+    /// device vJoy **reste acquis** (relâché seulement au `Drop`).
+    pub fn suspendre(&mut self) {
+        self.feeder.desactiver();
+        self.masquage = None; // démasque le G27 (Drop de la garde).
+    }
+
+    /// Reprend le pont après une pause : réactive l'alimentation et re-masque le G27
+    /// si nécessaire, **sans** ré-acquérir le device vJoy.
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurPont::Hid`]/[`ErreurPont::Masquage`] si le re-masquage échoue (l'axe
+    /// est alors alimenté mais le G27 reste visible).
+    pub fn reprendre(&mut self) -> Result<(), ErreurPont> {
+        self.feeder.activer();
+        if self.masquer && self.masquage.is_none() {
+            self.masquage = Some(masquer_g27()?);
+        }
+        Ok(())
     }
 
     /// Identifiant du device vJoy alimenté.
@@ -77,11 +100,23 @@ impl Pont {
         self.id_vjoy
     }
 
+    /// Vrai si l'alimentation des axes est active (pont en marche, pas en pause).
+    #[must_use]
+    pub fn actif(&self) -> bool {
+        self.feeder.est_actif()
+    }
+
     /// Vrai si le G27 réel est masqué au jeu.
     #[must_use]
     pub fn g27_masque(&self) -> bool {
         self.masquage.is_some()
     }
+}
+
+/// Active le masquage HidHide du G27 (initialise HID puis pose la garde).
+fn masquer_g27() -> Result<MasquageGarde, ErreurPont> {
+    let api = hidapi::HidApi::new().map_err(|erreur| ErreurPont::Hid(erreur.to_string()))?;
+    MasquageGarde::activer(&api).map_err(ErreurPont::Masquage)
 }
 
 /// Assemble le pont dans l'**ordre sûr** : feeder d'abord, masquage ensuite.
