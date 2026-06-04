@@ -11,6 +11,7 @@
 #![allow(unsafe_code)]
 
 mod decouverte;
+mod ffb;
 mod position;
 #[cfg(windows)]
 mod registre;
@@ -20,6 +21,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use decouverte::{Recherche, rechercher_dll};
+pub use ffb::{CallbackFfb, DonneesFfb};
 pub use position::JoystickPositionV2;
 
 use libloading::{Library, Symbol};
@@ -100,6 +102,7 @@ pub struct Vjoy {
     relinquish: FnLiberer,
     reset: FnDevice,
     update: FnMaj,
+    ffb_register: ffb::FnEnregistrerFfb,
 }
 
 impl Vjoy {
@@ -127,6 +130,7 @@ impl Vjoy {
         let relinquish = *charger_symbole::<FnLiberer>(&lib, b"RelinquishVJD\0")?;
         let reset = *charger_symbole::<FnDevice>(&lib, b"ResetVJD\0")?;
         let update = *charger_symbole::<FnMaj>(&lib, b"UpdateVJD\0")?;
+        let ffb_register = *charger_symbole::<ffb::FnEnregistrerFfb>(&lib, b"FfbRegisterGenCB\0")?;
 
         Ok(Self {
             _lib: lib,
@@ -137,6 +141,7 @@ impl Vjoy {
             relinquish,
             reset,
             update,
+            ffb_register,
         })
     }
 

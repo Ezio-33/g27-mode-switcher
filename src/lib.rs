@@ -14,6 +14,7 @@ pub mod config;
 pub mod device;
 pub mod entree;
 pub mod feeder;
+pub mod ffb;
 pub mod hid;
 pub mod hidhide;
 pub mod keymapper;

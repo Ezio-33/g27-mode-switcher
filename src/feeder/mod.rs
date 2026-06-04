@@ -203,10 +203,20 @@ fn boucle_feeder(
 }
 
 /// Garde RAII : relâche le device vJoy (reset + `RelinquishVJD`) au `Drop`, sur le
-/// thread worker (celui qui a acquis), quel que soit le mode de sortie.
-struct DeviceVjoyAcquis {
+/// thread qui a acquis, quel que soit le mode de sortie.
+///
+/// Réutilisable hors du feeder (cf. capture FFB) ; toujours construire **après**
+/// l'acquisition et la dropper **après** tout récepteur FFB lié au device.
+pub(crate) struct DeviceVjoyAcquis {
     vjoy: &'static Vjoy,
     id: u32,
+}
+
+impl DeviceVjoyAcquis {
+    /// Prend en charge la libération du device `id` déjà acquis sur `vjoy`.
+    pub(crate) fn new(vjoy: &'static Vjoy, id: u32) -> Self {
+        Self { vjoy, id }
+    }
 }
 
 impl Drop for DeviceVjoyAcquis {
@@ -227,7 +237,14 @@ fn relacher(vjoy: &Vjoy, id: u32) {
 /// Acquisition robuste : si le premier `AcquireVJD` échoue (device laissé non-FREE
 /// par un process précédent), on récupère le device (`ResetVJD` + `RelinquishVJD`)
 /// puis on réessaie une fois.
-fn preparer_vjoy(id: u32) -> Result<&'static Vjoy, ErreurFeeder> {
+///
+/// Réutilisable hors du feeder (cf. capture FFB). À appeler **hors du thread GUI**.
+///
+/// # Errors
+///
+/// Voir [`ErreurFeeder`] : vJoy indisponible/inactif, device occupé, acquisition
+/// échouée.
+pub(crate) fn preparer_vjoy(id: u32) -> Result<&'static Vjoy, ErreurFeeder> {
     let vjoy = Vjoy::partagee()?;
     if !vjoy.active() {
         return Err(ErreurFeeder::VjoyInactif);
