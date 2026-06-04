@@ -33,6 +33,7 @@ Windows 11.
 - [Réglage de l'angle de rotation](#réglage-de-langle-de-rotation)
 - [Autocentrage](#autocentrage)
 - [Retour de force (FFB)](#retour-de-force-ffb)
+- [Pont vJoy (recopie d'entrée + masquage)](#pont-vjoy-recopie-dentrée--masquage)
 - [Mapping natif du G27](#mapping-natif-du-g27)
 - [Dépannage](#dépannage)
 - [Annexe : accès HID sous Linux (règle udev)](#annexe--accès-hid-sous-linux-règle-udev)
@@ -303,12 +304,16 @@ desactiver_autocentrage_au_switch = false
 
 [fenetre]
 largeur = 480.0
-hauteur = 680.0
+hauteur = 800.0
 pos_x = 200.0                     # absent au premier lancement
 pos_y = 120.0
 
 [journalisation]
 verbosite = "info"                # info | debug | trace
+
+[pont]
+id_vjoy = 1                       # device vJoy alimenté par le pont (1–16)
+masquer_g27_au_demarrage = true   # masquer le G27 réel au jeu quand le pont tourne
 ```
 
 ### Clés
@@ -319,7 +324,9 @@ verbosite = "info"                # info | debug | trace
 | `appliquer_angle_au_switch` | booléen | `true` | Régler l'angle lors du `switch`. |
 | `desactiver_autocentrage_au_switch` | booléen | `false` | Couper l'autocentrage au `switch`. |
 | `verbosite` | `info`/`debug`/`trace` | `info` | Niveau de logs par défaut. |
-| `largeur` / `hauteur` / `pos_x` / `pos_y` | nombres | 480×680 | Géométrie de la fenêtre (gérée par la GUI). |
+| `largeur` / `hauteur` / `pos_x` / `pos_y` | nombres | 480×800 | Géométrie de la fenêtre (gérée par la GUI). |
+| `id_vjoy` | entier 1–16 | `1` | Device vJoy alimenté par le [pont](#pont-vjoy-recopie-dentrée--masquage). |
+| `masquer_g27_au_demarrage` | booléen | `true` | Masquer le G27 réel au jeu quand le pont tourne. |
 
 ### Modifier la configuration en ligne de commande
 
@@ -333,6 +340,8 @@ g27-mode-switcher config get angle_par_defaut
 # Modifier une clé (valeur validée, puis enregistrée)
 g27-mode-switcher config set angle_par_defaut 540
 g27-mode-switcher config set verbosite debug
+g27-mode-switcher config set id_vjoy 2
+g27-mode-switcher config set masquer_g27_au_demarrage false
 ```
 
 Les booléens acceptent `true`/`false` (ou `vrai`/`faux`, `oui`/`non`, `1`/`0`).
@@ -449,6 +458,85 @@ sur **vJoy + HidHide** (pilotes **signés WHQL**, donc compatibles Memory
 Integrity) pour exposer un périphérique virtuel et router les effets FFB vers le
 G27. Objectif : retrouver un retour de force de jeu tout en restant HVCI-safe.
 
+La **première brique** est déjà disponible : le [**pont vJoy**](#pont-vjoy-recopie-dentrée--masquage)
+recopie les entrées du G27 vers un device virtuel et masque le volant réel au jeu.
+Le **vrai retour de force dynamique** (routage des effets vers le G27) arrive à
+l'étape suivante (Phase 5) — voir la [feuille de route](#feuille-de-route).
+
+## Pont vJoy (recopie d'entrée + masquage)
+
+Depuis la **v0.3.0**, l'outil peut faire le **pont** entre le G27 réel et un
+**device vJoy virtuel** : il recopie en continu les axes et boutons du volant vers
+vJoy, tout en **masquant le G27 réel** au jeu (via HidHide) pour éviter le
+doublon. C'est la fondation sur laquelle s'appuiera le **vrai retour de force** en
+Phase 5 (voir [Retour de force](#retour-de-force-ffb)).
+
+> ⚠️ Le pont **ne fournit pas encore de FFB dynamique** : il recopie les entrées
+> et prépare le terrain. Le routage des effets de jeu vers le G27 arrive en Phase 5.
+
+### Prérequis
+
+Deux pilotes **signés WHQL** (donc compatibles HVCI / Memory Integrity), à
+installer une fois (x64) :
+
+- **vJoy** — périphérique de manette virtuel : <https://github.com/jshafer817/vJoy/releases>
+  (ou <https://sourceforge.net/projects/vjoystick/>). Après installation, ouvrez
+  **« Configure vJoy »** et créez au moins le **device #1**.
+- **HidHide** — masque le G27 réel aux jeux : <https://github.com/nefarius/HidHide/releases>
+
+La GUI **détecte automatiquement** ces deux composants et vous indique lesquels
+manquent ; l'état se met à jour tout seul après installation.
+
+> 💡 Le pont n'utilise **pas** le FFB de vJoy (Phase 4). Si le popup vJoy
+> « RegisterClassEx failed » apparaît au démarrage, décochez **« Enable Effects »**
+> (FFB) sur le device dans *Configure vJoy* : sans canal FFB, plus de popup.
+
+### Utilisation
+
+**Via la GUI** (recommandé) — carte **« Pont vJoy »** :
+
+- **Démarrer le pont** : choisissez le device vJoy (1–16), puis lancez. Le G27 est
+  masqué au jeu et le device vJoy recopie le volant. Le device vJoy est **acquis une
+  seule fois** pour toute la session.
+- **Arrêter le pont** : coupe la recopie et **démasque** le G27 (le device vJoy reste
+  réservé jusqu'à la fermeture de l'application). **Démarrer** le relance sans
+  ré-acquisition.
+- **Fermer la fenêtre** (croix) : nettoie tout — **G27 démasqué + device vJoy
+  libéré**.
+
+Le pont tourne sur son **propre thread** : l'interface reste fluide, et la bascule
+de mode / l'angle / l'autocentrage continuent de fonctionner **pendant** que le pont
+tourne (cet exécutable reste autorisé à lire le G27 grâce à la liste blanche
+HidHide).
+
+**Via la ligne de commande** :
+
+```bash
+# Démarre le pont (feeder vJoy + masquage). Pour arrêter : FERMEZ la console.
+g27-mode-switcher feeder
+
+# Cibler un autre device vJoy, ou ne pas masquer le G27
+g27-mode-switcher feeder --id 2
+g27-mode-switcher feeder --sans-masquage
+
+# Diagnostiquer les prérequis (vJoy + HidHide)
+g27-mode-switcher pont statut
+```
+
+Le device et le masquage par défaut viennent de la section `[pont]` de la
+[configuration](#configuration) (`id_vjoy`, `masquer_g27_au_demarrage`) ; `--id` et
+`--sans-masquage` sont prioritaires.
+
+### Sûreté : le G27 est toujours rendu visible à l'arrêt
+
+Le masquage est **lié au cycle de vie du pont** : il est garanti que le G27 est
+**démasqué** et le device vJoy **libéré** à l'arrêt (bouton *Arrêter*), à la
+fermeture de la fenêtre, ou à la fermeture de la console (mode CLI) — y compris en
+cas d'erreur. Seul un **kill brutal** du process (Gestionnaire des tâches, coupure
+de courant) peut laisser le G27 masqué. Dans ce cas rare, rouvrez l'outil et
+arrêtez/relancez le pont, ou utilisez le **HidHide Configuration Client** pour vider
+la liste de masquage.
+
 ## Mapping natif du G27
 
 En mode natif, Windows expose le G27 comme une **manette de jeu HID** standard.
@@ -553,11 +641,15 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 10. ✅ `v0.2.0` : passage à l'API HID native (`hidapi`), suppression de Zadig,
     commandes `set-range` et `set-autocenter`, réglage automatique de l'angle à
     900° après bascule (autocentrage matériel laissé actif par défaut).
-11. 🔜 `v0.3.0` : **FFB dynamique complet** en option via **vJoy + HidHide**
-    (signés WHQL, donc **HVCI préservé**, sans LGS) ; **interface graphique** ;
-    **keymapper** (mapping des boutons du G27 — notamment la boîte H — vers des
-    touches clavier) pour les jeux qui ne savent pas remapper la boîte H ;
-    **réactivation paramétrable** de l'autocentrage (`set-autocenter on`).
+11. 🚧 `v0.3.0` (en cours) : outil adaptatif « façon LGS », sans LGS et **HVCI
+    préservé**. Avancement :
+    - ✅ **Interface graphique** (eframe/egui).
+    - ✅ **Configuration TOML** persistante.
+    - ✅ **Pont vJoy** : recopie d'entrée G27 → device vJoy + **masquage HidHide**
+      du volant réel (fondation du FFB), avec démasquage garanti à l'arrêt.
+    - 🔜 **FFB dynamique complet** : routage des effets de jeu vers le G27 (Phase 5).
+    - 🔜 **Keymapper** (boîte H → clavier) pour les jeux sans remap.
+    - 🔜 **Réactivation paramétrable** de l'autocentrage (`set-autocenter on`).
 
 ## Références
 

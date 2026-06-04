@@ -217,9 +217,34 @@ contamination GPL.
       verbosité : `RUST_LOG` > `-v`/`-vv` > config > défaut.
     - **Phase 3 — Keymapper boîte H** : mapping des boutons du G27 (boîte H, boutons
       13–18 + 23) vers le clavier (`enigo`/SendInput) pour les jeux sans remap.
-    - **Phase 4 — Détection vJoy + feeder d'entrée** : détection runtime de
-      vJoy + HidHide (`libloading`), recopie des axes/boutons vers un périphérique
-      vJoy.
+    - **Phase 4 — Pont vJoy : détection + feeder d'entrée + masquage (✅ faite,
+      validée matériel)** : détection runtime de vJoy + HidHide (`libloading`),
+      recopie des axes/boutons du G27 vers un device vJoy (`feeder`), masquage du
+      G27 réel au jeu (`hidhide`, IOCTL direct), orchestration (`pont` :
+      `Feeder` + `MasquageGarde`), carte GUI « Pont vJoy » + sous-commande CLI
+      `feeder`. **Acquis / invariants à respecter** :
+      - **vJoy acquis une seule fois par process** : un 2ᵉ `AcquireVJD` dans un
+        process long-vivant (GUI) échoue (`RegisterClassEx` : classe de fenêtre FFB
+        de vJoyInterface jamais désenregistrée). Le `Feeder` garde le device toute
+        la session ; Démarrer/Arrêter ne fait que basculer l'alimentation
+        (`activer`/`desactiver`) + le masquage, sans ré-acquérir.
+      - **Tout l'accès vJoy se fait sur le thread worker du feeder** (jamais le
+        thread GUI/appelant) : `AcquireVJD` sur le thread GUI le **gèle**
+        (interblocage du fenêtrage FFB). Le démarrage initial part donc sur un
+        thread auxiliaire ; la GUI n'appelle jamais vJoy directement.
+      - `vJoyInterface.dll` chargée **une seule fois** (`Vjoy::partagee`,
+        `OnceLock`), jamais déchargée — la détection ne fait plus de va-et-vient
+        de chargement.
+      - **Masquage lié au cycle de vie du feeder** : `RelinquishVJD` + démasquage
+        **garantis** à l'arrêt par RAII (`DeviceVjoyAcquis` sur le thread worker,
+        `MasquageGarde` au `Drop`, ordre des champs `Pont`) sur tous les chemins
+        (bouton, croix GUI via `on_exit`, fermeture console CLI, erreur). Seul un
+        kill brutal échappe (récup. via HidHide Configuration Client).
+      - **Codes IOCTL HidHide validés** (cf. `Shared/HidHideIoctlContract.h`) :
+        accès `FILE_READ_DATA` pour tous les IOCTL ; liste blanche = chemin volume,
+        liste noire = instances de toutes les interfaces du G27.
+      - **Coexistence vérifiée** : la `DeviceSession` (bascule/angle/autocentrage)
+        écrit au G27 pendant que le pont tourne — notre exe reste en liste blanche.
     - **Phase 5 — Pont FFB** : retour de force dynamique (feeder vJoy → commandes
       `lg4ff`), module FFB isolé.
     - **Phase 6 — Autostart** : démarrage automatique avec Windows.
