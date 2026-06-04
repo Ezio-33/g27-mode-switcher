@@ -557,11 +557,18 @@ fn format_entrees(rapport: &[u8], entrees: EntreesG27) -> String {
     )
 }
 
-/// Drapeau d'arrêt posé par le handler Ctrl+C, lu par la boucle d'attente.
+/// Demande d'arrêt posée par le handler console (Ctrl+C / fermeture), lue par la
+/// boucle d'attente.
 static ARRET_DEMANDE: AtomicBool = AtomicBool::new(false);
+/// Signale que le nettoyage (démasquage + libération vJoy) est terminé.
+static NETTOYAGE_FINI: AtomicBool = AtomicBool::new(false);
 
-/// Démarre le pont (feeder + masquage), puis attend Ctrl+C pour s'arrêter
-/// proprement (le `Drop` du `Pont` arrête le feeder puis démasque le G27).
+/// Démarre le pont (feeder + masquage) et le maintient actif jusqu'à fermeture.
+///
+/// L'exécutable étant en sous-système GUI, PowerShell n'attend pas ce process et
+/// Ctrl+C ne lui parvient pas toujours : **fermer la fenêtre console** déclenche
+/// `CTRL_CLOSE`, que l'on intercepte pour garantir le démasquage + la libération
+/// vJoy. Pour un contrôle confortable, préférez la GUI (bouton Démarrer/Arrêter).
 fn run_feeder(id: Option<u32>, sans_masquage: bool) -> ExitCode {
     let config = config::Config::charger();
     // `--id` est prioritaire sur la config ; idem `--sans-masquage`.
@@ -584,7 +591,10 @@ fn run_feeder(id: Option<u32>, sans_masquage: bool) -> ExitCode {
             "visible"
         }
     );
-    println!("Ctrl+C pour arrêter (le G27 sera démasqué automatiquement).");
+    println!(
+        "Pour arrêter : FERMEZ cette fenêtre console (le G27 sera démasqué et le \
+         device vJoy libéré). La GUI offre un arrêt plus confortable."
+    );
 
     installer_handler_arret();
     while !ARRET_DEMANDE.load(Ordering::SeqCst) {
@@ -592,36 +602,43 @@ fn run_feeder(id: Option<u32>, sans_masquage: bool) -> ExitCode {
     }
 
     println!("Arrêt du pont…");
-    drop(pont); // arrête le feeder PUIS démasque le G27 (ordre des champs du Pont).
-    println!("Pont arrêté, G27 démasqué.");
+    drop(pont); // arrête le feeder (libère vJoy) PUIS démasque le G27 (ordre des champs).
+    println!("Pont arrêté, G27 démasqué, device vJoy libéré.");
+    // Débloque le handler console (cas CTRL_CLOSE, qui attend la fin du nettoyage).
+    NETTOYAGE_FINI.store(true, Ordering::SeqCst);
     ExitCode::SUCCESS
 }
 
-/// Installe un handler d'arrêt (Ctrl+C / fermeture console) qui **pose seulement
-/// un drapeau**.
+/// Installe le handler console qui déclenche l'arrêt propre du pont.
 ///
 /// ⚠️ CONTRAT DE SÛRETÉ — le handler ne DOIT JAMAIS appeler `std::process::exit`
-/// ni `abort` : cela court-circuiterait les `Drop` et laisserait le G27 masqué.
-/// Il se contente de poser [`ARRET_DEMANDE`] ; la boucle d'attente le lit et
-/// retourne, ce qui déclenche le `Drop` du `Pont` (arrêt feeder + démasquage).
+/// ni `abort` : cela court-circuiterait les `Drop` et laisserait le G27 masqué. Il
+/// pose [`ARRET_DEMANDE`] (la boucle d'attente le lit et déclenche le `Drop` du
+/// `Pont`), puis — pour `CTRL_CLOSE`/`LOGOFF`/`SHUTDOWN`, où le système termine le
+/// process dès le retour du handler — **attend** que le nettoyage soit terminé.
 #[allow(unsafe_code)]
 fn installer_handler_arret() {
     #[cfg(windows)]
     {
         // SAFETY: enregistrement d'un handler console ; `handler_console` n'accède
-        // qu'à un `static` atomique et ne fait aucune allocation.
+        // qu'à des `static` atomiques.
         unsafe {
             windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(handler_console), 1);
         }
     }
 }
 
-/// Handler console : pose le drapeau d'arrêt et signale l'événement comme géré.
+/// Handler console : demande l'arrêt puis attend la fin du nettoyage (borné, pour
+/// ne jamais dépasser le délai système ni bloquer indéfiniment).
 #[cfg(windows)]
 #[allow(unsafe_code)]
 unsafe extern "system" fn handler_console(_type_evenement: u32) -> i32 {
     ARRET_DEMANDE.store(true, Ordering::SeqCst);
-    1 // TRUE : événement géré, pas de terminaison par défaut.
+    let debut = std::time::Instant::now();
+    while !NETTOYAGE_FINI.load(Ordering::SeqCst) && debut.elapsed() < Duration::from_millis(4500) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    1 // TRUE : événement géré.
 }
 
 /// Masque/démasque le G27 réel via `HidHide`, ou affiche sa disponibilité.
