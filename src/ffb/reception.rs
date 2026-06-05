@@ -14,7 +14,7 @@
 
 use std::ffi::c_void;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::Sender;
 
 use crate::vjoy::{DonneesFfb, Vjoy};
 
@@ -37,17 +37,16 @@ pub struct RecepteurFfb {
 }
 
 impl RecepteurFfb {
-    /// Enregistre le callback FFB sur `vjoy` (device déjà acquis) et renvoie le
-    /// récepteur + le canal de réception des paquets.
+    /// Enregistre le callback FFB sur `vjoy` (device déjà acquis) ; chaque paquet est
+    /// transmis sur `sender`. L'appelant garde le `Receiver` correspondant.
     #[must_use]
-    pub fn enregistrer(vjoy: &'static Vjoy) -> (Self, Receiver<PaquetFfb>) {
-        let (tx, rx) = mpsc::channel();
-        let userdata = Box::into_raw(Box::new(tx));
+    pub fn enregistrer(vjoy: &'static Vjoy, sender: Sender<PaquetFfb>) -> Self {
+        let userdata = Box::into_raw(Box::new(sender));
         // SAFETY: `userdata` est un `Box` fraîchement créé, conservé vivant dans le
         // champ `userdata` jusqu'au `Drop` (lui-même postérieur au `RelinquishVJD`) ;
         // `trampoline` respecte la convention et ne panique jamais.
         unsafe { vjoy.enregistrer_callback_ffb(trampoline, userdata.cast()) };
-        (Self { vjoy, userdata }, rx)
+        Self { vjoy, userdata }
     }
 }
 

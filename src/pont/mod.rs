@@ -12,7 +12,10 @@ mod detection;
 
 pub use detection::{Composant, Prerequis, detecter};
 
+use std::sync::mpsc::Sender;
+
 use crate::feeder::{self, Feeder};
+use crate::ffb::PaquetFfb;
 use crate::hidhide::{self, MasquageGarde};
 
 /// Erreur au démarrage du pont.
@@ -59,9 +62,24 @@ impl Pont {
     /// [`ErreurPont`] selon l'étape qui échoue. Si le masquage échoue, le `feeder`
     /// (local) est relâché — arrêt + RelinquishVJD — avant le retour de l'erreur.
     pub fn demarrer(id_vjoy: u32, masquer: bool) -> Result<Self, ErreurPont> {
+        Self::demarrer_avec_ffb(id_vjoy, masquer, None)
+    }
+
+    /// Comme [`demarrer`](Pont::demarrer), mais greffe en plus un récepteur FFB sur le
+    /// **même** device acquis : chaque paquet FFB reçu est transmis sur `ffb` (le jeu
+    /// n'envoie du FFB qu'à un volant vJoy actif, donc alimenté par le feeder).
+    ///
+    /// # Errors
+    ///
+    /// Voir [`demarrer`](Pont::demarrer).
+    pub fn demarrer_avec_ffb(
+        id_vjoy: u32,
+        masquer: bool,
+        ffb: Option<Sender<PaquetFfb>>,
+    ) -> Result<Self, ErreurPont> {
         let (feeder, masquage) = assembler(
             masquer,
-            || Feeder::demarrer(id_vjoy).map_err(ErreurPont::Feeder),
+            move || Feeder::demarrer(id_vjoy, ffb).map_err(ErreurPont::Feeder),
             masquer_g27,
         )?;
         Ok(Self {

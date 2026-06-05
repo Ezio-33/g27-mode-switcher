@@ -9,7 +9,7 @@ use tracing_subscriber::EnvFilter;
 
 use g27_mode_switcher::entree::{self, EntreesG27, LecteurG27};
 use g27_mode_switcher::keymapper::{self, Bouton, EtatBoutons};
-use g27_mode_switcher::{autocenter, config, ffb, hid, hidhide, pont, range, switcher};
+use g27_mode_switcher::{autocenter, config, hid, hidhide, pont, range, switcher};
 
 /// Bascule un volant Logitech G27 vers son mode natif, sans pilote propriétaire.
 #[derive(Debug, Parser)]
@@ -637,14 +637,33 @@ fn run_ffb(action: FfbAction) -> ExitCode {
 
 /// Capture les paquets FFB envoyés par le jeu au device vJoy et les affiche.
 ///
-/// L'acquisition + l'écoute tournent sur un **thread worker** (comme le feeder) :
-/// cela valide que la fenêtre FFB de vJoy s'initialise hors du thread principal,
-/// sans regel ni popup. Arrêt par fermeture de la console (`CTRL_CLOSE`).
+/// Démarre le **pont complet** (recopie G27 → vJoy + masquage, cycle de vie Phase 4)
+/// et greffe le récepteur FFB sur le **même** device acquis : un jeu n'envoie du FFB
+/// qu'à un volant vJoy actif (axes alimentés). L'acquisition + le callback vivent sur
+/// le thread worker du feeder. Arrêt par fermeture de la console (`CTRL_CLOSE`) →
+/// démasquage + `RelinquishVJD` garantis (Drop du pont).
 fn run_ffb_capturer(id: Option<u32>) -> ExitCode {
     let config = config::Config::charger();
     let id_vjoy = id.unwrap_or(config.pont.id_vjoy);
+    let masquer = config.pont.masquer_g27_au_demarrage;
 
-    println!("Capture FFB sur le device vJoy #{id_vjoy}.");
+    let (tx, paquets) = std::sync::mpsc::channel();
+    let pont = match pont::Pont::demarrer_avec_ffb(id_vjoy, masquer, Some(tx)) {
+        Ok(pont) => pont,
+        Err(erreur) => {
+            eprintln!("Erreur : {erreur}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "Capture FFB — device vJoy #{} alimenté, G27 {}.",
+        pont.id_vjoy(),
+        if pont.g27_masque() {
+            "masqué au jeu"
+        } else {
+            "visible"
+        }
+    );
     println!(
         "Le device doit avoir « Enable Effects » activé (Configure vJoy) ; \
          envoyez des effets depuis un jeu."
@@ -652,34 +671,21 @@ fn run_ffb_capturer(id: Option<u32>) -> ExitCode {
     println!("Pour arrêter : FERMEZ cette fenêtre console.");
 
     installer_handler_arret();
-
-    let worker = std::thread::spawn(move || {
-        ffb::capturer(id_vjoy, &ARRET_DEMANDE, |paquet| {
+    while !ARRET_DEMANDE.load(Ordering::SeqCst) {
+        while let Ok(paquet) = paquets.try_recv() {
             println!(
                 "FFB reçu — cmd {:#x}, taille {} octet(s)",
                 paquet.commande, paquet.taille
             );
-        })
-    });
-
-    let resultat = worker.join();
-    // Débloque le handler console (cas CTRL_CLOSE, qui attend la fin du nettoyage).
-    NETTOYAGE_FINI.store(true, Ordering::SeqCst);
-
-    match resultat {
-        Ok(Ok(())) => {
-            println!("Capture FFB arrêtée, device vJoy libéré.");
-            ExitCode::SUCCESS
         }
-        Ok(Err(erreur)) => {
-            eprintln!("Erreur : {erreur}");
-            ExitCode::FAILURE
-        }
-        Err(_) => {
-            eprintln!("Erreur : le thread de capture FFB a paniqué.");
-            ExitCode::FAILURE
-        }
+        std::thread::sleep(Duration::from_millis(20));
     }
+
+    println!("Arrêt de la capture FFB…");
+    drop(pont); // arrête le feeder (libère vJoy) PUIS démasque le G27 (ordre des champs).
+    println!("Capture FFB arrêtée, G27 démasqué, device vJoy libéré.");
+    NETTOYAGE_FINI.store(true, Ordering::SeqCst);
+    ExitCode::SUCCESS
 }
 
 /// Installe le handler console qui déclenche l'arrêt propre du pont.

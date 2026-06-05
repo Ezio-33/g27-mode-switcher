@@ -25,6 +25,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::entree::{ErreurLecture, LecteurG27, entrees_depuis_rapport};
+use crate::ffb::{PaquetFfb, RecepteurFfb};
 use crate::vjoy::{ErreurVjoy, StatutVjd, Vjoy};
 
 /// Délai d'attente d'un rapport HID dans la boucle (ms) ; court pour la latence.
@@ -74,12 +75,15 @@ impl Feeder {
     /// pour remonter les erreurs de setup ; la recopie tourne ensuite en arrière-plan.
     /// **À appeler hors du thread GUI** (cf. en-tête du module).
     ///
+    /// Si `ffb` est `Some`, un récepteur FFB est greffé sur le **même** device acquis
+    /// (sur le thread worker) et chaque paquet reçu est transmis sur ce `Sender`.
+    ///
     /// # Errors
     ///
     /// Voir [`ErreurFeeder`] : vJoy indisponible/inactif, device occupé, acquisition
     /// échouée, G27 absent ou non natif, ou worker non démarré. En cas d'échec après
     /// acquisition, le worker relâche le device vJoy avant de se terminer.
-    pub fn demarrer(id_vjoy: u32) -> Result<Self, ErreurFeeder> {
+    pub fn demarrer(id_vjoy: u32, ffb: Option<Sender<PaquetFfb>>) -> Result<Self, ErreurFeeder> {
         let actif = Arc::new(AtomicBool::new(true));
         let arret = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel();
@@ -89,7 +93,7 @@ impl Feeder {
             let arret = Arc::clone(&arret);
             thread::Builder::new()
                 .name("g27-feeder".to_owned())
-                .spawn(move || boucle_feeder(id_vjoy, &actif, &arret, &tx))
+                .spawn(move || boucle_feeder(id_vjoy, &actif, &arret, &tx, ffb))
                 .map_err(ErreurFeeder::Demarrage)?
         };
 
@@ -148,6 +152,7 @@ fn boucle_feeder(
     actif: &AtomicBool,
     arret: &AtomicBool,
     tx: &Sender<Result<(), ErreurFeeder>>,
+    ffb: Option<Sender<PaquetFfb>>,
 ) {
     // AcquireVJD ici, sur le thread worker (jamais sur le thread appelant/GUI).
     let vjoy = match preparer_vjoy(id) {
@@ -157,6 +162,14 @@ fn boucle_feeder(
             return;
         }
     };
+    // ⚠️ ORDRE DE DÉCLARATION = ORDRE DE DROP INVERSE. `_recepteur` (FFB) déclaré
+    // AVANT `_device` ⇒ droppé APRÈS lui : on relâche d'abord le device
+    // (`RelinquishVJD`, qui stoppe les callbacks) PUIS on libère le userdata FFB.
+    let _recepteur = ffb.map(|sender| {
+        let recepteur = RecepteurFfb::enregistrer(vjoy, sender);
+        tracing::debug!("FFB : callback générique enregistré sur le device vJoy n°{id}");
+        recepteur
+    });
     // Garde RAII : relâche le device vJoy (reset + RelinquishVJD) au `Drop`, sur CE
     // thread, quel que soit le mode de sortie du worker (arrêt, erreur, panique).
     let _device = DeviceVjoyAcquis { vjoy, id };
@@ -180,6 +193,7 @@ fn boucle_feeder(
     };
 
     let _ = tx.send(Ok(()));
+    tracing::debug!("Feeder : alimentation des axes active (device vJoy n°{id})");
 
     while !arret.load(Ordering::Relaxed) {
         if !actif.load(Ordering::Relaxed) {
@@ -204,19 +218,9 @@ fn boucle_feeder(
 
 /// Garde RAII : relâche le device vJoy (reset + `RelinquishVJD`) au `Drop`, sur le
 /// thread qui a acquis, quel que soit le mode de sortie.
-///
-/// Réutilisable hors du feeder (cf. capture FFB) ; toujours construire **après**
-/// l'acquisition et la dropper **après** tout récepteur FFB lié au device.
-pub(crate) struct DeviceVjoyAcquis {
+struct DeviceVjoyAcquis {
     vjoy: &'static Vjoy,
     id: u32,
-}
-
-impl DeviceVjoyAcquis {
-    /// Prend en charge la libération du device `id` déjà acquis sur `vjoy`.
-    pub(crate) fn new(vjoy: &'static Vjoy, id: u32) -> Self {
-        Self { vjoy, id }
-    }
 }
 
 impl Drop for DeviceVjoyAcquis {
@@ -237,14 +241,7 @@ fn relacher(vjoy: &Vjoy, id: u32) {
 /// Acquisition robuste : si le premier `AcquireVJD` échoue (device laissé non-FREE
 /// par un process précédent), on récupère le device (`ResetVJD` + `RelinquishVJD`)
 /// puis on réessaie une fois.
-///
-/// Réutilisable hors du feeder (cf. capture FFB). À appeler **hors du thread GUI**.
-///
-/// # Errors
-///
-/// Voir [`ErreurFeeder`] : vJoy indisponible/inactif, device occupé, acquisition
-/// échouée.
-pub(crate) fn preparer_vjoy(id: u32) -> Result<&'static Vjoy, ErreurFeeder> {
+fn preparer_vjoy(id: u32) -> Result<&'static Vjoy, ErreurFeeder> {
     let vjoy = Vjoy::partagee()?;
     if !vjoy.active() {
         return Err(ErreurFeeder::VjoyInactif);
