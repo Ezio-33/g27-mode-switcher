@@ -15,7 +15,7 @@ pub use detection::{Composant, Prerequis, detecter};
 use std::sync::mpsc::Sender;
 
 use crate::feeder::{self, Feeder};
-use crate::ffb::PaquetFfb;
+use crate::ffb::MessageFfb;
 use crate::hidhide::{self, MasquageGarde};
 
 /// Erreur au démarrage du pont.
@@ -75,7 +75,7 @@ impl Pont {
     pub fn demarrer_avec_ffb(
         id_vjoy: u32,
         masquer: bool,
-        ffb: Option<Sender<PaquetFfb>>,
+        ffb: Option<Sender<MessageFfb>>,
     ) -> Result<Self, ErreurPont> {
         let (feeder, masquage) = assembler(
             masquer,

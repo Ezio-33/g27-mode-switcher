@@ -25,7 +25,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::entree::{ErreurLecture, LecteurG27, entrees_depuis_rapport};
-use crate::ffb::{PaquetFfb, RecepteurFfb};
+use crate::ffb::{MessageFfb, RecepteurFfb};
 use crate::vjoy::{ErreurVjoy, StatutVjd, Vjoy};
 
 /// Délai d'attente d'un rapport HID dans la boucle (ms) ; court pour la latence.
@@ -83,7 +83,7 @@ impl Feeder {
     /// Voir [`ErreurFeeder`] : vJoy indisponible/inactif, device occupé, acquisition
     /// échouée, G27 absent ou non natif, ou worker non démarré. En cas d'échec après
     /// acquisition, le worker relâche le device vJoy avant de se terminer.
-    pub fn demarrer(id_vjoy: u32, ffb: Option<Sender<PaquetFfb>>) -> Result<Self, ErreurFeeder> {
+    pub fn demarrer(id_vjoy: u32, ffb: Option<Sender<MessageFfb>>) -> Result<Self, ErreurFeeder> {
         let actif = Arc::new(AtomicBool::new(true));
         let arret = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel();
@@ -152,7 +152,7 @@ fn boucle_feeder(
     actif: &AtomicBool,
     arret: &AtomicBool,
     tx: &Sender<Result<(), ErreurFeeder>>,
-    ffb: Option<Sender<PaquetFfb>>,
+    ffb: Option<Sender<MessageFfb>>,
 ) {
     // AcquireVJD ici, sur le thread worker (jamais sur le thread appelant/GUI).
     let vjoy = match preparer_vjoy(id) {

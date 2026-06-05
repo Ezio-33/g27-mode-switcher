@@ -672,11 +672,8 @@ fn run_ffb_capturer(id: Option<u32>) -> ExitCode {
 
     installer_handler_arret();
     while !ARRET_DEMANDE.load(Ordering::SeqCst) {
-        while let Ok(paquet) = paquets.try_recv() {
-            println!(
-                "FFB reçu — cmd {:#x}, taille {} octet(s)",
-                paquet.commande, paquet.taille
-            );
+        while let Ok(message) = paquets.try_recv() {
+            println!("FFB reçu — {message:?}");
         }
         std::thread::sleep(Duration::from_millis(20));
     }

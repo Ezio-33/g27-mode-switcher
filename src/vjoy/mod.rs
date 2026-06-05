@@ -12,6 +12,7 @@
 
 mod decouverte;
 mod ffb;
+mod ffb_effet;
 mod position;
 #[cfg(windows)]
 mod registre;
@@ -22,6 +23,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use decouverte::{Recherche, rechercher_dll};
 pub use ffb::{CallbackFfb, DonneesFfb};
+pub use ffb_effet::{
+    EffetCondition, EffetConstante, EffetEnveloppe, EffetPeriodique, EffetRampe, OperationFfb,
+    RapportEffet,
+};
 pub use position::JoystickPositionV2;
 
 use libloading::{Library, Symbol};
@@ -102,7 +107,7 @@ pub struct Vjoy {
     relinquish: FnLiberer,
     reset: FnDevice,
     update: FnMaj,
-    ffb_register: ffb::FnEnregistrerFfb,
+    ffb: ffb::FfbHelpers,
 }
 
 impl Vjoy {
@@ -130,7 +135,7 @@ impl Vjoy {
         let relinquish = *charger_symbole::<FnLiberer>(&lib, b"RelinquishVJD\0")?;
         let reset = *charger_symbole::<FnDevice>(&lib, b"ResetVJD\0")?;
         let update = *charger_symbole::<FnMaj>(&lib, b"UpdateVJD\0")?;
-        let ffb_register = *charger_symbole::<ffb::FnEnregistrerFfb>(&lib, b"FfbRegisterGenCB\0")?;
+        let ffb = ffb::FfbHelpers::charger(&lib)?;
 
         Ok(Self {
             _lib: lib,
@@ -141,7 +146,7 @@ impl Vjoy {
             relinquish,
             reset,
             update,
-            ffb_register,
+            ffb,
         })
     }
 
@@ -247,7 +252,10 @@ impl Vjoy {
 }
 
 /// Résout un symbole de la DLL en pointeur de fonction typé.
-fn charger_symbole<'lib, T>(lib: &'lib Library, nom: &[u8]) -> Result<Symbol<'lib, T>, ErreurVjoy> {
+pub(super) fn charger_symbole<'lib, T>(
+    lib: &'lib Library,
+    nom: &[u8],
+) -> Result<Symbol<'lib, T>, ErreurVjoy> {
     // SAFETY: `nom` désigne une fonction exportée du SDK vJoy dont la signature
     // `T` correspond à la déclaration officielle ; un symbole absent est remonté
     // comme erreur, sans déréférencement.
