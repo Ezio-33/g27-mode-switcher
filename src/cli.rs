@@ -9,7 +9,7 @@ use tracing_subscriber::EnvFilter;
 
 use g27_mode_switcher::entree::{self, EntreesG27, LecteurG27};
 use g27_mode_switcher::keymapper::{self, Bouton, EtatBoutons};
-use g27_mode_switcher::{autocenter, config, hid, hidhide, pont, range, switcher};
+use g27_mode_switcher::{autocenter, config, ffb, hid, hidhide, pont, range, report, switcher};
 
 /// Bascule un volant Logitech G27 vers son mode natif, sans pilote propriétaire.
 #[derive(Debug, Parser)]
@@ -108,6 +108,12 @@ enum FfbAction {
         /// Device vJoy à écouter (1–16). Défaut : `id_vjoy` de la config.
         #[arg(long)]
         id: Option<u32>,
+    },
+    /// Applique une force constante au G27 natif et la maintient (test FFB Phase 5).
+    /// ⚠️ SÉCURITÉ : commencez par de TRÈS PETITES valeurs. Arrêt : fermez la console.
+    Force {
+        /// Couple à appliquer (−10000..10000 ; négatif = gauche, positif = droite).
+        valeur: i32,
     },
 }
 
@@ -632,6 +638,7 @@ fn run_feeder(id: Option<u32>, sans_masquage: bool) -> ExitCode {
 fn run_ffb(action: FfbAction) -> ExitCode {
     match action {
         FfbAction::Capturer { id } => run_ffb_capturer(id),
+        FfbAction::Force { valeur } => run_ffb_force(valeur),
     }
 }
 
@@ -681,6 +688,95 @@ fn run_ffb_capturer(id: Option<u32>) -> ExitCode {
     println!("Arrêt de la capture FFB…");
     drop(pont); // arrête le feeder (libère vJoy) PUIS démasque le G27 (ordre des champs).
     println!("Capture FFB arrêtée, G27 démasqué, device vJoy libéré.");
+    NETTOYAGE_FINI.store(true, Ordering::SeqCst);
+    ExitCode::SUCCESS
+}
+
+/// Garantit la **remise au neutre** du volant (stop des forces) à la sortie, quel
+/// que soit le chemin : fin normale, Ctrl+C, fermeture de la console, erreur ou
+/// panique. Même rigueur RAII que le démasquage `HidHide` de la Phase 4.
+///
+/// Le `Drop` ne panique jamais : un échec d'envoi est tracé et signalé, sans plus —
+/// laisser remonter une panique depuis un `Drop` avorterait le process et pourrait
+/// laisser une force résiduelle dans le firmware.
+struct GardeForce {
+    api: hidapi::HidApi,
+    info: hid::DeviceInfo,
+}
+
+impl Drop for GardeForce {
+    fn drop(&mut self) {
+        let stop = ffb::commande_stop_forces();
+        if let Err(erreur) = report::send_reports(
+            &self.api,
+            &self.info,
+            std::slice::from_ref(&stop),
+            Duration::ZERO,
+        ) {
+            tracing::error!("échec du stop FFB à la sortie : {erreur}");
+            eprintln!("Attention : impossible de remettre le volant au neutre ({erreur}).");
+        }
+    }
+}
+
+/// Applique une **force constante** au G27 natif et la maintient jusqu'à fermeture.
+///
+/// ⚠️ Sécurité physique : commencez par de **très petites** valeurs. La force tient
+/// tant que la console reste ouverte ; la remise au neutre (stop) est **garantie** à
+/// la sortie par le `Drop` de [`GardeForce`] (créé avant le premier envoi).
+fn run_ffb_force(valeur: i32) -> ExitCode {
+    let api = match hidapi::HidApi::new() {
+        Ok(api) => api,
+        Err(erreur) => {
+            eprintln!("Erreur : accès HID impossible : {erreur}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let info = match hid::find_native_g27(&api) {
+        Ok(info) => info,
+        Err(hid::NativeLookup::NotNative) => {
+            eprintln!(
+                "Le G27 est en mode compatibilité : la force n'a aucun effet. Lancez « switch » d'abord."
+            );
+            return ExitCode::FAILURE;
+        }
+        Err(hid::NativeLookup::NoG27) => {
+            eprintln!("Aucun G27 détecté. Branchez le volant puis réessayez.");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Garde créé AVANT tout envoi de force : même une panique pendant l'envoi initial
+    // déclenche alors le stop. À partir d'ici, tout retour passe par son `Drop`.
+    let garde = GardeForce { api, info };
+
+    let commande = ffb::commande_force_constante(valeur);
+    if let Err(erreur) = report::send_reports(
+        &garde.api,
+        &garde.info,
+        std::slice::from_ref(&commande),
+        Duration::ZERO,
+    ) {
+        eprintln!("Échec de l'envoi de la force : {erreur}");
+        return ExitCode::FAILURE; // le `Drop` du garde remet quand même au neutre.
+    }
+
+    println!(
+        "Force constante appliquée au {} (couple {valeur}).",
+        garde.info
+    );
+    println!("⚠️ Commencez toujours par de TRÈS PETITES valeurs et gardez la main sur le volant.");
+    println!("Pour arrêter (et remettre le volant au neutre) : FERMEZ cette fenêtre console.");
+
+    installer_handler_arret();
+    while !ARRET_DEMANDE.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(150));
+    }
+
+    println!("Arrêt — remise du volant au neutre…");
+    drop(garde); // envoie le stop (garanti).
+    println!("Volant remis au neutre.");
+    // Débloque le handler console (cas CTRL_CLOSE, qui attend la fin du nettoyage).
     NETTOYAGE_FINI.store(true, Ordering::SeqCst);
     ExitCode::SUCCESS
 }

@@ -12,10 +12,12 @@
 mod analyse;
 mod calcul;
 mod effets;
+mod g27;
 mod message;
 mod reception;
 
 pub use calcul::{EtatVolant, couple_net};
 pub use effets::{BanqueEffets, Effet, ParametresEffet};
+pub use g27::{commande_force_constante, commande_stop_forces};
 pub use message::{ControleDevice, MessageFfb, OperationEffet, TypeEffet};
 pub use reception::RecepteurFfb;
