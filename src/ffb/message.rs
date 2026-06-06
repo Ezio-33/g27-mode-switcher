@@ -4,7 +4,7 @@
 //! bruts (`FFBEType`, `FFBOP`, `FFB_CTRL`) sont traduits en variantes lisibles.
 
 /// Message FFB décodé d'un paquet vJoy.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum MessageFfb {
     /// Création d'un effet dans un bloc (réserve l'index, fixe le type).
     NouvelEffet { bloc: u8, type_effet: TypeEffet },
