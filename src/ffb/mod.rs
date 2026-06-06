@@ -10,10 +10,12 @@
 #![allow(clippy::doc_markdown)]
 
 mod analyse;
+mod calcul;
 mod effets;
 mod message;
 mod reception;
 
+pub use calcul::{EtatVolant, couple_net};
 pub use effets::{BanqueEffets, Effet, ParametresEffet};
 pub use message::{ControleDevice, MessageFfb, OperationEffet, TypeEffet};
 pub use reception::RecepteurFfb;
