@@ -10,9 +10,10 @@
 //! - stop (désactive le slot 1) : `[0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]`, émis
 //!   dès que `niveau` retombe sur `0x80` (volant neutre), comme le fait le pilote.
 //!
-//! Convention de signe : un couple **positif** pousse vers la **droite** (cf.
-//! [`super::EtatVolant`]). Si le volant réel réagit à l'envers, basculer la constante
-//! [`SENS_POSITIF_VERS_DROITE`] suffit à inverser le sens (à valider sur matériel).
+//! Convention de signe : un couple **positif** doit pousser vers la **droite** (cf.
+//! [`super::EtatVolant`]). Sur le G27 testé, le firmware applique le sens inverse —
+//! [`SENS_POSITIF_VERS_DROITE`] vaut donc `false` (validé sur matériel) : on nie le
+//! couple avant l'encodage pour qu'un couple positif pousse bien à droite côté volant.
 
 use crate::report::OutputReport;
 
@@ -40,9 +41,10 @@ const FORCE_CONSTANTE_CMD: [u8; 2] = [0x11, 0x08];
 /// Réf. : `hid-lg4ff.c`.
 const STOP_CMD: u8 = 0x13;
 
-/// Sens du couple : `true` ⇒ un couple positif augmente le niveau (`> 0x80`, droite).
-/// À vérifier sur matériel ; inverser cette constante suffit à corriger le sens.
-const SENS_POSITIF_VERS_DROITE: bool = true;
+/// Sens du couple, **validé sur matériel** : sur le G27 testé, un niveau `> 0x80`
+/// pousse vers la **gauche**. On garde donc `false` pour qu'un couple positif (droite,
+/// cf. [`super::EtatVolant`]) soit nié avant l'encodage et pousse bien à droite.
+const SENS_POSITIF_VERS_DROITE: bool = false;
 
 /// Construit la commande HID appliquant la **force constante** correspondant à
 /// `couple` (−PLAGE..PLAGE).
@@ -110,19 +112,20 @@ mod tests {
 
     #[test]
     fn couple_maximal_pousse_a_fond_a_droite() {
-        // +PLAGE ⇒ niveau 0x80 + 0x7F = 0xFF.
+        // Couple +PLAGE = droite. Sens firmware inversé (validé matériel) : le couple
+        // est nié avant encodage ⇒ niveau 0x80 − 0x7F = 0x01 (= droite côté volant).
         assert_eq!(
             commande_force_constante(PLAGE).to_buffer(),
-            vec![0x00, 0x11, 0x08, 0xFF, 0x80, 0x00, 0x00, 0x00]
+            vec![0x00, 0x11, 0x08, 0x01, 0x80, 0x00, 0x00, 0x00]
         );
     }
 
     #[test]
     fn couple_minimal_pousse_a_fond_a_gauche() {
-        // −PLAGE ⇒ niveau 0x80 − 0x7F = 0x01.
+        // Couple −PLAGE = gauche ⇒ après inversion firmware, niveau 0x80 + 0x7F = 0xFF.
         assert_eq!(
             commande_force_constante(-PLAGE).to_buffer(),
-            vec![0x00, 0x11, 0x08, 0x01, 0x80, 0x00, 0x00, 0x00]
+            vec![0x00, 0x11, 0x08, 0xFF, 0x80, 0x00, 0x00, 0x00]
         );
     }
 

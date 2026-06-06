@@ -113,6 +113,8 @@ enum FfbAction {
     /// ⚠️ SÉCURITÉ : commencez par de TRÈS PETITES valeurs. Arrêt : fermez la console.
     Force {
         /// Couple à appliquer (−10000..10000 ; négatif = gauche, positif = droite).
+        /// `allow_hyphen_values` permet de passer une valeur négative sans `--`.
+        #[arg(allow_hyphen_values = true)]
         valeur: i32,
     },
 }
