@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use eframe::egui::{self, RichText, Stroke};
-use g27_mode_switcher::config::Config;
+use g27_mode_switcher::config::{Config, ModeSouhaite};
 use g27_mode_switcher::device::{Command, DeviceSession, Event, OpError, OpKind, OpReport, Status};
 
 use super::carte_pont::CartePont;
@@ -41,6 +41,8 @@ pub struct App {
     about_open: bool,
     config: Config,
     carte_pont: CartePont,
+    /// Garde une seule restauration auto du mode par session (au premier statut connu).
+    auto_restore_fait: bool,
 }
 
 impl App {
@@ -57,6 +59,36 @@ impl App {
             about_open: false,
             config,
             carte_pont: CartePont::new(),
+            auto_restore_fait: false,
+        }
+    }
+
+    /// Envoie la commande de bascule en mode natif avec les réglages courants.
+    fn envoyer_bascule(&self) {
+        self.session.send(Command::Switch {
+            apply_range: self.config.volant.appliquer_angle_au_switch,
+            range_degrees: self.range_deg,
+            disable_autocenter: self.config.volant.desactiver_autocentrage_au_switch,
+        });
+    }
+
+    /// Restaure le mode souhaité au **premier statut matériel connu** (une seule fois
+    /// par session) : si l'utilisateur était en natif et que le volant a redémarré en
+    /// compatibilité (cycle USB), on rebascule automatiquement. S'il préférait la
+    /// compatibilité, on n'y touche pas.
+    fn restaurer_mode_si_besoin(&mut self) {
+        if self.auto_restore_fait || self.status == Status::Absent {
+            return;
+        }
+        self.auto_restore_fait = true; // décision prise dès qu'un mode réel est connu.
+        if self.status == Status::Compatibility
+            && self.config.volant.mode_souhaite == ModeSouhaite::Natif
+        {
+            self.envoyer_bascule();
+            self.log.push(
+                LineKind::Info,
+                "Mode natif mémorisé : bascule automatique au démarrage\u{2026}",
+            );
         }
     }
 
@@ -96,6 +128,7 @@ impl App {
                 Event::Status(status) if status != self.status => {
                     self.status = status;
                     self.log.push(LineKind::Info, status_line(status));
+                    self.restaurer_mode_si_besoin();
                 }
                 Event::Status(_) => {}
                 Event::Op(report) => {
@@ -155,14 +188,11 @@ impl App {
                     .fill(theme::GOLD)
                     .min_size(egui::vec2(ui.available_width(), 40.0));
                     if ui.add(button).clicked() {
-                        self.session.send(Command::Switch {
-                            apply_range: self.config.volant.appliquer_angle_au_switch,
-                            range_degrees: self.range_deg,
-                            disable_autocenter: self
-                                .config
-                                .volant
-                                .desactiver_autocentrage_au_switch,
-                        });
+                        // Mémorise le choix « natif » pour le restaurer aux prochains
+                        // démarrages (le firmware repart en compat à chaque cycle USB).
+                        self.config.volant.mode_souhaite = ModeSouhaite::Natif;
+                        self.sauvegarder_config();
+                        self.envoyer_bascule();
                         self.log.push(LineKind::Info, "Bascule demandée\u{2026}");
                     }
                 }
@@ -183,9 +213,13 @@ impl App {
                             .stroke(Stroke::new(1.0, theme::BORDER_STRONG))
                             .corner_radius(egui::CornerRadius::same(7));
                             if ui.add(revert).clicked() {
+                                // Mémorise le choix « compatibilité » : plus de bascule
+                                // auto au prochain démarrage.
+                                self.config.volant.mode_souhaite = ModeSouhaite::Compatibilite;
+                                self.sauvegarder_config();
                                 self.log.push(
                                     LineKind::Info,
-                                    "Pour revenir en mode compatibilité, débranchez puis rebranchez le volant.",
+                                    "Mode compatibilité mémorisé. Débranchez puis rebranchez le volant pour y revenir maintenant.",
                                 );
                             }
                         });

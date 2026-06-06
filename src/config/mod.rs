@@ -63,6 +63,43 @@ pub struct Volant {
     pub appliquer_angle_au_switch: bool,
     /// Désactiver l'autocentrage matériel lors d'un `switch`.
     pub desactiver_autocentrage_au_switch: bool,
+    /// Mode du volant souhaité, **restauré au démarrage de la GUI**. Le firmware
+    /// revient en compatibilité à chaque cycle USB : si l'utilisateur était en natif,
+    /// on rebascule automatiquement ; s'il préférait la compatibilité, on n'y touche
+    /// pas. Mis à jour à chaque action de bascule de l'utilisateur.
+    pub mode_souhaite: ModeSouhaite,
+}
+
+/// Mode du volant mémorisé entre deux sessions (préférence utilisateur).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModeSouhaite {
+    /// Restaurer le mode natif : bascule automatique si le volant est en compat.
+    #[default]
+    Natif,
+    /// Conserver le mode compatibilité : aucune bascule automatique.
+    Compatibilite,
+}
+
+impl ModeSouhaite {
+    /// Représentation textuelle stable (clés `config get`/`set`, sérialisation).
+    #[must_use]
+    pub fn comme_str(self) -> &'static str {
+        match self {
+            Self::Natif => "natif",
+            Self::Compatibilite => "compatibilite",
+        }
+    }
+
+    /// Interprète une saisie textuelle (formes FR/EN tolérées).
+    #[must_use]
+    pub fn depuis_str(valeur: &str) -> Option<Self> {
+        match valeur {
+            "natif" | "native" => Some(Self::Natif),
+            "compatibilite" | "compat" | "compatibility" => Some(Self::Compatibilite),
+            _ => None,
+        }
+    }
 }
 
 /// Géométrie de la fenêtre graphique (section `[fenetre]`).
@@ -112,6 +149,7 @@ impl Default for Volant {
             angle_par_defaut: ANGLE_DEFAUT,
             appliquer_angle_au_switch: true,
             desactiver_autocentrage_au_switch: false,
+            mode_souhaite: ModeSouhaite::Natif,
         }
     }
 }

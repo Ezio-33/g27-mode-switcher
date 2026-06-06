@@ -7,10 +7,11 @@
 use super::{ANGLE_MAX, ANGLE_MIN, Config, ID_VJOY_MAX, ID_VJOY_MIN, VERBOSITES};
 
 /// Clés modifiables via `config set` / lisibles via `config get`.
-pub const CLES_MODIFIABLES: [&str; 6] = [
+pub const CLES_MODIFIABLES: [&str; 7] = [
     "angle_par_defaut",
     "appliquer_angle_au_switch",
     "desactiver_autocentrage_au_switch",
+    "mode_souhaite",
     "verbosite",
     "id_vjoy",
     "masquer_g27_au_demarrage",
@@ -21,7 +22,7 @@ pub const CLES_MODIFIABLES: [&str; 6] = [
 pub enum ErreurCle {
     /// La clé demandée n'existe pas.
     #[error(
-        "clé inconnue : « {0} ». Clés valides : angle_par_defaut, appliquer_angle_au_switch, desactiver_autocentrage_au_switch, verbosite, id_vjoy, masquer_g27_au_demarrage"
+        "clé inconnue : « {0} ». Clés valides : angle_par_defaut, appliquer_angle_au_switch, desactiver_autocentrage_au_switch, mode_souhaite, verbosite, id_vjoy, masquer_g27_au_demarrage"
     )]
     Inconnue(String),
     /// La valeur fournie n'est pas valide pour cette clé.
@@ -47,6 +48,7 @@ impl Config {
             "desactiver_autocentrage_au_switch" => {
                 Ok(self.volant.desactiver_autocentrage_au_switch.to_string())
             }
+            "mode_souhaite" => Ok(self.volant.mode_souhaite.comme_str().to_owned()),
             "verbosite" => Ok(self.journalisation.verbosite.clone()),
             "id_vjoy" => Ok(self.pont.id_vjoy.to_string()),
             "masquer_g27_au_demarrage" => Ok(self.pont.masquer_g27_au_demarrage.to_string()),
@@ -75,6 +77,10 @@ impl Config {
             }
             "desactiver_autocentrage_au_switch" => {
                 self.volant.desactiver_autocentrage_au_switch = parse_bool(cle, valeur)?;
+            }
+            "mode_souhaite" => {
+                self.volant.mode_souhaite = super::ModeSouhaite::depuis_str(valeur)
+                    .ok_or_else(|| invalide(cle, "natif ou compatibilite"))?;
             }
             "verbosite" => {
                 if !VERBOSITES.contains(&valeur) {
@@ -181,6 +187,23 @@ mod tests {
         assert!(config.definir_cle("id_vjoy", "0").is_err());
         assert!(config.definir_cle("id_vjoy", "17").is_err());
         assert!(config.definir_cle("id_vjoy", "x").is_err());
+    }
+
+    #[test]
+    fn mode_souhaite_lecture_ecriture() {
+        use super::super::ModeSouhaite;
+        let mut config = Config::default();
+        // Défaut : natif (restauration du mode natif au démarrage).
+        assert_eq!(config.volant.mode_souhaite, ModeSouhaite::Natif);
+        config
+            .definir_cle("mode_souhaite", "compatibilite")
+            .unwrap();
+        assert_eq!(config.volant.mode_souhaite, ModeSouhaite::Compatibilite);
+        assert_eq!(config.lire_cle("mode_souhaite").unwrap(), "compatibilite");
+        // Forme anglaise tolérée, valeur inconnue refusée.
+        config.definir_cle("mode_souhaite", "native").unwrap();
+        assert_eq!(config.volant.mode_souhaite, ModeSouhaite::Natif);
+        assert!(config.definir_cle("mode_souhaite", "turbo").is_err());
     }
 
     #[test]
