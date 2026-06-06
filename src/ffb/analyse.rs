@@ -30,15 +30,15 @@ pub(super) fn analyser(vjoy: &Vjoy, donnees: &DonneesFfb) -> Option<MessageFfb> 
             let e = vjoy.ffb_constante(donnees)?;
             MessageFfb::Constante {
                 bloc: e.bloc,
-                magnitude: e.magnitude,
+                magnitude: signe_16(e.magnitude),
             }
         }
         PT_RAMPREP => {
             let e = vjoy.ffb_rampe(donnees)?;
             MessageFfb::Rampe {
                 bloc: e.bloc,
-                debut: e.debut,
-                fin: e.fin,
+                debut: signe_16(e.debut),
+                fin: signe_16(e.fin),
             }
         }
         PT_PRIDREP => {
@@ -46,7 +46,7 @@ pub(super) fn analyser(vjoy: &Vjoy, donnees: &DonneesFfb) -> Option<MessageFfb> 
             MessageFfb::Periodique {
                 bloc: e.bloc,
                 magnitude: e.magnitude,
-                offset: e.offset,
+                offset: signe_16(e.offset),
                 phase: e.phase,
                 periode: e.periode,
             }
@@ -55,9 +55,9 @@ pub(super) fn analyser(vjoy: &Vjoy, donnees: &DonneesFfb) -> Option<MessageFfb> 
             let e = vjoy.ffb_condition(donnees)?;
             MessageFfb::Condition {
                 bloc: e.bloc,
-                centre: e.centre,
-                coeff_pos: e.coeff_pos,
-                coeff_neg: e.coeff_neg,
+                centre: signe_16(e.centre),
+                coeff_pos: signe_16(e.coeff_pos),
+                coeff_neg: signe_16(e.coeff_neg),
                 satur_pos: e.satur_pos,
                 satur_neg: e.satur_neg,
                 deadband: e.deadband,
@@ -106,4 +106,15 @@ pub(super) fn analyser(vjoy: &Vjoy, donnees: &DonneesFfb) -> Option<MessageFfb> 
         _ => return None,
     };
     Some(message)
+}
+
+/// Réinterprète les 16 bits de poids faible comme un entier **signé**.
+///
+/// Les helpers `Ffb_h_*` écrivent les magnitudes/coefficients signés sur 16 bits, les
+/// octets de poids fort restant à 0. Lus tels quels, une valeur négative (force vers la
+/// gauche) apparaîtrait comme un grand positif (ex. `0xF800` = 63488 au lieu de −2048).
+/// On tronque donc aux 16 bits de poids faible avant de réinterpréter le signe.
+#[allow(clippy::cast_possible_truncation)]
+fn signe_16(valeur: i32) -> i32 {
+    i32::from(valeur as i16)
 }
