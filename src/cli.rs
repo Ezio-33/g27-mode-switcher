@@ -9,7 +9,9 @@ use tracing_subscriber::EnvFilter;
 
 use g27_mode_switcher::entree::{self, EntreesG27, LecteurG27};
 use g27_mode_switcher::keymapper::{self, Bouton, EtatBoutons};
-use g27_mode_switcher::{autocenter, config, ffb, hid, hidhide, pont, range, report, switcher};
+use g27_mode_switcher::{
+    autocenter, config, feeder, ffb, hid, hidhide, pont, range, report, switcher,
+};
 
 /// Bascule un volant Logitech G27 vers son mode natif, sans pilote propriétaire.
 #[derive(Debug, Parser)]
@@ -188,7 +190,7 @@ impl Cli {
             Some(command) => {
                 let config = config::Config::charger();
                 init_cli_logging(self.verbose, &config.journalisation.verbosite);
-                dispatch(command, config)
+                dispatch(command, config, self.verbose)
             }
             None => crate::gui::run(self.verbose),
         }
@@ -210,7 +212,7 @@ fn init_cli_logging(verbose: u8, config_level: &str) {
 }
 
 /// Exécute une sous-commande CLI et renvoie son code de sortie.
-fn dispatch(command: Command, config: config::Config) -> ExitCode {
+fn dispatch(command: Command, config: config::Config, verbose: u8) -> ExitCode {
     match command {
         Command::List => run_list(),
         Command::Switch {
@@ -223,7 +225,7 @@ fn dispatch(command: Command, config: config::Config) -> ExitCode {
         Command::SetAutocenter { state } => run_set_autocenter(state),
         Command::Config { action } => run_config(action, config),
         Command::Boutons => run_boutons(),
-        Command::Entrees => run_entrees(),
+        Command::Entrees => run_entrees(verbose),
         Command::Feeder { id, sans_masquage } => run_feeder(id, sans_masquage),
         Command::Hidhide { action } => run_hidhide(action),
         Command::Pont { action } => run_pont(action),
@@ -535,13 +537,26 @@ fn run_boutons() -> ExitCode {
 /// Lit en direct les entrées complètes du G27 (debug/calibration du feeder vJoy).
 ///
 /// Sert à caler les offsets d'axes : affiche le rapport brut et les valeurs
-/// décodées (volant, pédales, chapeau, boutons).
-fn run_entrees() -> ExitCode {
-    boucle_lecture(
+/// décodées (volant, pédales, chapeau, boutons). En mode `-v`, ajoute le détail
+/// **brut → mappé** des boutons pour localiser un bit ignoré par le parsing : tous
+/// les bits armés du rapport (indices absolus) et les boutons réellement recopiés
+/// vers vJoy. Un bit qui s'arme sans apparaître côté vJoy pointe l'octet/bit manquant.
+fn run_entrees(verbose: u8) -> ExitCode {
+    let en_tete = if verbose > 0 {
+        "Lecture des entrées du G27 natif (Ctrl+C pour quitter) — mode diagnostic.\n\
+         Appuyez un bouton manquant : s'il arme un bit brut sans bouton vJoy, l'octet/bit est localisé."
+    } else {
         "Lecture des entrées du G27 natif (Ctrl+C pour quitter).\n\
-         Bougez le volant et les pédales pour caler les offsets d'axes.",
-        |rapport| format_entrees(rapport, entree::entrees_depuis_rapport(rapport)),
-    )
+         Bougez le volant et les pédales pour caler les offsets d'axes."
+    };
+    boucle_lecture(en_tete, move |rapport| {
+        let entrees = entree::entrees_depuis_rapport(rapport);
+        if verbose > 0 {
+            format_entrees_diagnostic(rapport, entrees)
+        } else {
+            format_entrees(rapport, entrees)
+        }
+    })
 }
 
 /// Formate un rapport HID pour la calibration : hex, bits armés, rapports reconnus.
@@ -592,6 +607,23 @@ fn format_entrees(rapport: &[u8], entrees: EntreesG27) -> String {
         embr = entrees.embrayage,
         chapeau = entrees.chapeau,
     )
+}
+
+/// Variante diagnostic de [`format_entrees`] (mode `-v`) : ajoute, sous la ligne
+/// décodée, **tous** les bits armés du rapport brut (indices absolus, octet × 8 + bit)
+/// et les boutons effectivement recopiés vers vJoy par le feeder. Comparer les deux
+/// localise un bit ignoré par le parsing : un bit armé sans bouton vJoy correspondant
+/// désigne l'octet/bit que le décodage ne lit pas.
+fn format_entrees_diagnostic(rapport: &[u8], entrees: EntreesG27) -> String {
+    let base = format_entrees(rapport, entrees);
+    let bits = bits_armes(rapport);
+    let masque_vjoy = feeder::position_depuis_entrees(&entrees)
+        .buttons
+        .cast_unsigned();
+    let boutons_vjoy: Vec<u8> = (1u8..=24)
+        .filter(|numero| masque_vjoy & (1u32 << (numero - 1)) != 0)
+        .collect();
+    format!("{base}\n    bits bruts armés = {bits:?}  →  boutons vJoy mappés = {boutons_vjoy:?}")
 }
 
 /// Demande d'arrêt posée par le handler console (Ctrl+C / fermeture), lue par la
