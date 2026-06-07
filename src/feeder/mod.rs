@@ -24,12 +24,26 @@ use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use crate::autocenter;
 use crate::entree::{ErreurLecture, LecteurG27, entrees_depuis_rapport};
-use crate::ffb::{MessageFfb, RecepteurFfb};
+use crate::ffb::{
+    MessageFfb, PiloteForce, RecepteurFfb, commande_stop_forces, normaliser_position,
+};
+use crate::report::{self, OutputReport};
 use crate::vjoy::{ErreurVjoy, StatutVjd, Vjoy};
 
 /// Délai d'attente d'un rapport HID dans la boucle (ms) ; court pour la latence.
 const DELAI_LECTURE_MS: i32 = 5;
+
+/// Demande de retour de force greffée au feeder.
+pub enum DemandeFfb {
+    /// Pas de FFB (recopie d'entrée seule).
+    Aucune,
+    /// Capture seule : transmet les messages FFB bruts (debug `ffb capturer`).
+    Capture(Sender<MessageFfb>),
+    /// Pont complet : consomme les messages et **pilote la force** du G27 (Phase 5).
+    Pont,
+}
 
 /// Pause de la boucle quand l'alimentation est suspendue (axes en pause).
 const DELAI_PAUSE_MS: u64 = 15;
@@ -75,15 +89,17 @@ impl Feeder {
     /// pour remonter les erreurs de setup ; la recopie tourne ensuite en arrière-plan.
     /// **À appeler hors du thread GUI** (cf. en-tête du module).
     ///
-    /// Si `ffb` est `Some`, un récepteur FFB est greffé sur le **même** device acquis
-    /// (sur le thread worker) et chaque paquet reçu est transmis sur ce `Sender`.
+    /// Selon `ffb`, un récepteur FFB est greffé sur le **même** device acquis (sur le
+    /// thread worker) : en [`DemandeFfb::Capture`] les messages bruts sont transmis sur
+    /// le `Sender` ; en [`DemandeFfb::Pont`] ils pilotent la force du G27 (autocentrage
+    /// coupé, `stop` garanti à l'arrêt).
     ///
     /// # Errors
     ///
     /// Voir [`ErreurFeeder`] : vJoy indisponible/inactif, device occupé, acquisition
     /// échouée, G27 absent ou non natif, ou worker non démarré. En cas d'échec après
     /// acquisition, le worker relâche le device vJoy avant de se terminer.
-    pub fn demarrer(id_vjoy: u32, ffb: Option<Sender<MessageFfb>>) -> Result<Self, ErreurFeeder> {
+    pub fn demarrer(id_vjoy: u32, ffb: DemandeFfb) -> Result<Self, ErreurFeeder> {
         let actif = Arc::new(AtomicBool::new(true));
         let arret = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel();
@@ -152,7 +168,7 @@ fn boucle_feeder(
     actif: &AtomicBool,
     arret: &AtomicBool,
     tx: &Sender<Result<(), ErreurFeeder>>,
-    ffb: Option<Sender<MessageFfb>>,
+    ffb: DemandeFfb,
 ) {
     // AcquireVJD ici, sur le thread worker (jamais sur le thread appelant/GUI).
     let vjoy = match preparer_vjoy(id) {
@@ -165,11 +181,19 @@ fn boucle_feeder(
     // ⚠️ ORDRE DE DÉCLARATION = ORDRE DE DROP INVERSE. `_recepteur` (FFB) déclaré
     // AVANT `_device` ⇒ droppé APRÈS lui : on relâche d'abord le device
     // (`RelinquishVJD`, qui stoppe les callbacks) PUIS on libère le userdata FFB.
-    let _recepteur = ffb.map(|sender| {
-        let recepteur = RecepteurFfb::enregistrer(vjoy, sender);
-        tracing::debug!("FFB : callback générique enregistré sur le device vJoy n°{id}");
-        recepteur
-    });
+    // En mode Pont, le récepteur émet vers un canal interne lu par le `PiloteForce`.
+    let (mut entree_pont, _recepteur) = match ffb {
+        DemandeFfb::Aucune => (None, None),
+        DemandeFfb::Capture(sender) => {
+            tracing::debug!("FFB : capture des messages bruts (device vJoy n°{id})");
+            (None, Some(RecepteurFfb::enregistrer(vjoy, sender)))
+        }
+        DemandeFfb::Pont => {
+            let (tx_ffb, rx_ffb) = mpsc::channel();
+            tracing::debug!("FFB : pont de force actif (device vJoy n°{id})");
+            (Some(rx_ffb), Some(RecepteurFfb::enregistrer(vjoy, tx_ffb)))
+        }
+    };
     // Garde RAII : relâche le device vJoy (reset + RelinquishVJD) au `Drop`, sur CE
     // thread, quel que soit le mode de sortie du worker (arrêt, erreur, panique).
     let _device = DeviceVjoyAcquis { vjoy, id };
@@ -184,6 +208,23 @@ fn boucle_feeder(
             return;
         }
     };
+    // ⚠️ `garde_force` déclarée APRÈS `_device` ⇒ droppée AVANT lui : on envoie le
+    // `stop` (volant neutre) et on restaure l'autocentrage AVANT le `RelinquishVJD`.
+    // Priorité physique absolue (cf. `GardeForceG27::drop`).
+    let mut pilote: Option<PiloteForce> = None;
+    let garde_force: Option<GardeForceG27> = match entree_pont.take() {
+        Some(rx) => match GardeForceG27::activer(&api) {
+            Ok(garde) => {
+                pilote = Some(PiloteForce::new(rx));
+                Some(garde)
+            }
+            Err(erreur) => {
+                let _ = tx.send(Err(erreur));
+                return;
+            }
+        },
+        None => None,
+    };
     let mut lecteur = match LecteurG27::ouvrir(&api) {
         Ok(lecteur) => lecteur,
         Err(erreur) => {
@@ -195,6 +236,8 @@ fn boucle_feeder(
     let _ = tx.send(Ok(()));
     tracing::debug!("Feeder : alimentation des axes active (device vJoy n°{id})");
 
+    let debut = std::time::Instant::now();
+    let mut position_volant = 0i32;
     while !arret.load(Ordering::Relaxed) {
         if !actif.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(DELAI_PAUSE_MS));
@@ -203,6 +246,7 @@ fn boucle_feeder(
         match lecteur.lire(DELAI_LECTURE_MS) {
             Ok(true) => {
                 let entrees = entrees_depuis_rapport(lecteur.rapport());
+                position_volant = normaliser_position(entrees.volant);
                 let mut position = position_depuis_entrees(&entrees);
                 let _ = vjoy.mettre_a_jour(id, &mut position);
             }
@@ -212,8 +256,17 @@ fn boucle_feeder(
             // « Démarrer » après reconnexion ; sinon redémarrer l'application.
             Err(_) => actif.store(false, Ordering::Relaxed),
         }
+        // Rafraîchissement FFB (~100 Hz) : même sans nouveau rapport, on réémet la
+        // dernière force pour satisfaire le watchdog du G27 (sinon il la relâche).
+        if let (Some(pilote), Some(garde)) = (pilote.as_mut(), garde_force.as_ref()) {
+            let instant_ms = u64::try_from(debut.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if let Some(commande) = pilote.prochaine_commande(position_volant, instant_ms) {
+                garde.envoyer(&commande);
+            }
+        }
     }
-    // `_device` (garde) est relâché ici, et sur tout retour ou panique ci-dessus.
+    // Drop ici (et sur tout retour/panique ci-dessus) : `lecteur`, puis `garde_force`
+    // (stop + autocentrage restauré), puis `_device` (RelinquishVJD), puis `_recepteur`.
 }
 
 /// Garde RAII : relâche le device vJoy (reset + `RelinquishVJD`) au `Drop`, sur le
@@ -233,6 +286,54 @@ impl Drop for DeviceVjoyAcquis {
 fn relacher(vjoy: &Vjoy, id: u32) {
     vjoy.reinitialiser(id);
     vjoy.liberer(id);
+}
+
+/// Garde RAII de la **sortie de force** vers le G27 (mode Pont).
+///
+/// Détient un handle d'écriture dédié au G27 (distinct de celui du lecteur ; les
+/// handles HID concurrents au G27 sont validés depuis la Phase 4). À la construction,
+/// elle **coupe l'autocentrage matériel** (sinon le ressort firmware lutterait contre
+/// le FFB du jeu). Au `Drop` — garanti sur tous les chemins (arrêt, erreur, panique) —
+/// elle remet d'abord le **volant au neutre** (`stop`) puis **restaure l'autocentrage**.
+struct GardeForceG27 {
+    device: hidapi::HidDevice,
+}
+
+impl GardeForceG27 {
+    /// Ouvre le handle d'écriture du G27 natif et coupe l'autocentrage matériel.
+    fn activer(api: &hidapi::HidApi) -> Result<Self, ErreurFeeder> {
+        let info = crate::hid::find_native_g27(api).map_err(|manque| match manque {
+            crate::hid::NativeLookup::NotNative => ErreurFeeder::Lecture(ErreurLecture::NotNative),
+            crate::hid::NativeLookup::NoG27 => ErreurFeeder::Lecture(ErreurLecture::NoG27),
+        })?;
+        let device = api
+            .open_path(info.path.as_c_str())
+            .map_err(|erreur| ErreurFeeder::Lecture(ErreurLecture::Ouverture(erreur)))?;
+        if let Err(erreur) = report::write_report(&device, &autocenter::disable_autocenter_report())
+        {
+            tracing::warn!("FFB : désactivation de l'autocentrage impossible : {erreur}");
+        }
+        Ok(Self { device })
+    }
+
+    /// Envoie une commande de force au G27 (erreur seulement tracée : on ne casse
+    /// jamais la boucle temps réel pour un write raté).
+    fn envoyer(&self, commande: &OutputReport) {
+        if let Err(erreur) = report::write_report(&self.device, commande) {
+            tracing::debug!("FFB : écriture de force impossible : {erreur}");
+        }
+    }
+}
+
+impl Drop for GardeForceG27 {
+    fn drop(&mut self) {
+        // 1) Priorité physique absolue : volant neutre (stop des forces) AVANT tout.
+        let _ = report::write_report(&self.device, &commande_stop_forces());
+        // 2) Restaure l'autocentrage matériel coupé au démarrage du pont FFB.
+        for commande in autocenter::enable_autocenter_reports() {
+            let _ = report::write_report(&self.device, &commande);
+        }
+    }
 }
 
 /// Charge vJoy (instance partagée du process), vérifie sa disponibilité et acquiert

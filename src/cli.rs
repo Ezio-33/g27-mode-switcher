@@ -109,6 +109,16 @@ enum FfbAction {
         #[arg(long)]
         id: Option<u32>,
     },
+    /// Démarre le pont FFB complet : feeder vJoy + masquage + retour de force du jeu
+    /// vers le G27 (autocentrage coupé). Arrêt : fermez la console (volant remis au neutre).
+    Pont {
+        /// Device vJoy à alimenter (1–16). Défaut : `id_vjoy` de la config.
+        #[arg(long)]
+        id: Option<u32>,
+        /// Ne pas masquer le G27 au jeu (pont FFB seul).
+        #[arg(long)]
+        sans_masquage: bool,
+    },
     /// Applique une force constante au G27 natif et la maintient (test FFB Phase 5).
     /// ⚠️ SÉCURITÉ : commencez par de TRÈS PETITES valeurs. Arrêt : fermez la console.
     Force {
@@ -640,8 +650,54 @@ fn run_feeder(id: Option<u32>, sans_masquage: bool) -> ExitCode {
 fn run_ffb(action: FfbAction) -> ExitCode {
     match action {
         FfbAction::Capturer { id } => run_ffb_capturer(id),
+        FfbAction::Pont { id, sans_masquage } => run_ffb_pont(id, sans_masquage),
         FfbAction::Force { valeur } => run_ffb_force(valeur),
     }
+}
+
+/// Démarre le pont FFB complet et le maintient jusqu'à fermeture de la console.
+///
+/// Le retour de force du jeu (via vJoy) est recopié vers le G27 à ~100 Hz ;
+/// l'autocentrage matériel est coupé pendant le pont. À l'arrêt (fermeture console),
+/// le `Drop` du `Pont` **garantit** la remise au neutre du volant + la restauration de
+/// l'autocentrage, puis le démasquage et la libération vJoy.
+fn run_ffb_pont(id: Option<u32>, sans_masquage: bool) -> ExitCode {
+    let config = config::Config::charger();
+    let id_vjoy = id.unwrap_or(config.pont.id_vjoy);
+    let masquer = !sans_masquage && config.pont.masquer_g27_au_demarrage;
+
+    let pont = match pont::Pont::demarrer_pont_ffb(id_vjoy, masquer) {
+        Ok(pont) => pont,
+        Err(erreur) => {
+            eprintln!("Erreur : {erreur}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "Pont FFB actif — device vJoy #{} alimenté, G27 {}, autocentrage coupé.",
+        pont.id_vjoy(),
+        if pont.g27_masque() {
+            "masqué au jeu"
+        } else {
+            "visible"
+        }
+    );
+    println!(
+        "Lancez un jeu : le retour de force est recopié vers le volant. \
+         ⚠️ Gardez la main sur le volant pour le premier essai."
+    );
+    println!("Pour arrêter (volant remis au neutre) : FERMEZ cette fenêtre console.");
+
+    installer_handler_arret();
+    while !ARRET_DEMANDE.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(150));
+    }
+
+    println!("Arrêt du pont FFB…");
+    drop(pont); // stop des forces + autocentrage restauré, puis RelinquishVJD + démasquage.
+    println!("Pont FFB arrêté, volant au neutre, G27 démasqué, device vJoy libéré.");
+    NETTOYAGE_FINI.store(true, Ordering::SeqCst);
+    ExitCode::SUCCESS
 }
 
 /// Capture les paquets FFB envoyés par le jeu au device vJoy et les affiche.
@@ -657,7 +713,7 @@ fn run_ffb_capturer(id: Option<u32>) -> ExitCode {
     let masquer = config.pont.masquer_g27_au_demarrage;
 
     let (tx, paquets) = std::sync::mpsc::channel();
-    let pont = match pont::Pont::demarrer_avec_ffb(id_vjoy, masquer, Some(tx)) {
+    let pont = match pont::Pont::demarrer_capture_ffb(id_vjoy, masquer, tx) {
         Ok(pont) => pont,
         Err(erreur) => {
             eprintln!("Erreur : {erreur}");

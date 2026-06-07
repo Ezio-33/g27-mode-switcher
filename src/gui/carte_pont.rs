@@ -223,9 +223,10 @@ impl CartePont {
             let id = config.pont.id_vjoy;
             let masquer = config.pont.masquer_g27_au_demarrage;
             let (tx, rx) = mpsc::channel();
-            // Acquisition vJoy hors du thread GUI (cf. en-tête du module).
+            // Acquisition vJoy hors du thread GUI (cf. en-tête du module). Pont FFB
+            // complet : le retour de force du jeu est recopié vers le G27.
             std::thread::spawn(move || {
-                let _ = tx.send(Pont::demarrer(id, masquer));
+                let _ = tx.send(Pont::demarrer_pont_ffb(id, masquer));
             });
             self.demarrage = Some(rx);
             log.push(LineKind::Info, "Démarrage du pont demandé\u{2026}");

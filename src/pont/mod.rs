@@ -14,7 +14,7 @@ pub use detection::{Composant, Prerequis, detecter};
 
 use std::sync::mpsc::Sender;
 
-use crate::feeder::{self, Feeder};
+use crate::feeder::{self, DemandeFfb, Feeder};
 use crate::ffb::MessageFfb;
 use crate::hidhide::{self, MasquageGarde};
 
@@ -62,21 +62,37 @@ impl Pont {
     /// [`ErreurPont`] selon l'étape qui échoue. Si le masquage échoue, le `feeder`
     /// (local) est relâché — arrêt + RelinquishVJD — avant le retour de l'erreur.
     pub fn demarrer(id_vjoy: u32, masquer: bool) -> Result<Self, ErreurPont> {
-        Self::demarrer_avec_ffb(id_vjoy, masquer, None)
+        Self::demarrer_interne(id_vjoy, masquer, DemandeFfb::Aucune)
     }
 
-    /// Comme [`demarrer`](Pont::demarrer), mais greffe en plus un récepteur FFB sur le
-    /// **même** device acquis : chaque paquet FFB reçu est transmis sur `ffb` (le jeu
-    /// n'envoie du FFB qu'à un volant vJoy actif, donc alimenté par le feeder).
+    /// Comme [`demarrer`](Pont::demarrer), mais greffe un récepteur FFB en **capture** :
+    /// chaque paquet FFB reçu est transmis brut sur `ffb` (debug ; le jeu n'envoie du
+    /// FFB qu'à un volant vJoy actif, donc alimenté par le feeder).
     ///
     /// # Errors
     ///
     /// Voir [`demarrer`](Pont::demarrer).
-    pub fn demarrer_avec_ffb(
+    pub fn demarrer_capture_ffb(
         id_vjoy: u32,
         masquer: bool,
-        ffb: Option<Sender<MessageFfb>>,
+        ffb: Sender<MessageFfb>,
     ) -> Result<Self, ErreurPont> {
+        Self::demarrer_interne(id_vjoy, masquer, DemandeFfb::Capture(ffb))
+    }
+
+    /// Comme [`demarrer`](Pont::demarrer), mais active le **pont FFB complet** : les
+    /// effets reçus pilotent la force du G27 (autocentrage coupé pendant le pont,
+    /// `stop` garanti à l'arrêt).
+    ///
+    /// # Errors
+    ///
+    /// Voir [`demarrer`](Pont::demarrer).
+    pub fn demarrer_pont_ffb(id_vjoy: u32, masquer: bool) -> Result<Self, ErreurPont> {
+        Self::demarrer_interne(id_vjoy, masquer, DemandeFfb::Pont)
+    }
+
+    /// Assemble le pont (feeder + masquage) avec la demande FFB voulue.
+    fn demarrer_interne(id_vjoy: u32, masquer: bool, ffb: DemandeFfb) -> Result<Self, ErreurPont> {
         let (feeder, masquage) = assembler(
             masquer,
             move || Feeder::demarrer(id_vjoy, ffb).map_err(ErreurPont::Feeder),
