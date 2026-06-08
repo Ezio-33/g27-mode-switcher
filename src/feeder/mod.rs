@@ -59,7 +59,11 @@ pub enum ErreurFeeder {
     #[error("le device vJoy n°{0} n'est pas disponible (statut : {1:?})")]
     DeviceIndisponible(u32, StatutVjd),
     /// L'acquisition du device vJoy a échoué.
-    #[error("acquisition du device vJoy n°{0} impossible")]
+    #[error(
+        "acquisition du device vJoy n°{0} impossible — il est probablement déjà \
+         utilisé par une autre instance (fermez la fenêtre GUI ou toute autre console \
+         g27-mode-switcher, puis réessayez)"
+    )]
     AcquisitionEchouee(u32),
     /// Échec de lecture du G27 (non détecté, mode compat, ouverture).
     #[error("{0}")]
