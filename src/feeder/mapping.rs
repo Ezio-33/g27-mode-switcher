@@ -12,6 +12,17 @@ const POV_CENTRE: u32 = 0xFFFF_FFFF;
 /// marche arrière n'a pas de numéro HID propre (bit vendor), on lui réserve le 24.
 const NUMERO_BOUTON_MARCHE_ARRIERE: u8 = 24;
 
+/// Remappage des boutons HID du G27 vers les numéros de boutons vJoy souhaités
+/// (préférence utilisateur). Indexé par le numéro de bouton **G27** (1–23) ; la valeur
+/// est le numéro de bouton **vJoy** émis. C'est une permutation des boutons 1–22 ; le
+/// bouton 23 (indicateur « marche arrière enclenchée ») reste inchangé. Indice 0 inutilisé.
+const REMAP_BOUTONS: [u8; 24] = [
+    0, // indice 0 inutilisé (boutons 1-indexés)
+    16, 14, 15, 13, 8, 7, 2, 1, 10, 11, // G27 1–10
+    12, 9, 17, 18, 19, 20, 21, 22, 4, 6, // G27 11–20
+    3, 5, 23, // G27 21–23
+];
+
 /// Convertit les entrées décodées du G27 en position vJoy.
 ///
 /// Mappage : volant → axe X, accélérateur → axe Y, frein → axe Z, embrayage →
@@ -29,14 +40,27 @@ pub fn position_depuis_entrees(entrees: &EntreesG27) -> JoystickPositionV2 {
     }
 }
 
-/// Masque des boutons vJoy : les 24 bits HID du G27 + la marche arrière (synthétisée
-/// depuis le levier enfoncé) ajoutée sur [`NUMERO_BOUTON_MARCHE_ARRIERE`].
+/// Masque des boutons vJoy : les boutons HID du G27 **remappés** selon
+/// [`REMAP_BOUTONS`] + la marche arrière (synthétisée depuis le levier enfoncé)
+/// ajoutée sur [`NUMERO_BOUTON_MARCHE_ARRIERE`].
 fn boutons_avec_marche_arriere(entrees: &EntreesG27) -> u32 {
-    let mut masque = entrees.boutons.masque();
+    let mut masque = remapper_boutons(entrees.boutons.masque());
     if entrees.marche_arriere {
         masque |= 1 << (NUMERO_BOUTON_MARCHE_ARRIERE - 1);
     }
     masque
+}
+
+/// Applique [`REMAP_BOUTONS`] : pour chaque bouton G27 armé dans `masque_g27` (bit
+/// `n-1` = bouton G27 `n`), arme le bouton vJoy correspondant. Renvoie le masque vJoy.
+fn remapper_boutons(masque_g27: u32) -> u32 {
+    let mut sortie = 0u32;
+    for (bouton_g27, &bouton_vjoy) in REMAP_BOUTONS.iter().enumerate().skip(1) {
+        if masque_g27 & (1u32 << (bouton_g27 - 1)) != 0 {
+            sortie |= 1u32 << (bouton_vjoy - 1);
+        }
+    }
+    sortie
 }
 
 /// Met à l'échelle `valeur` (dans `0..=max_entree`) sur `0..=AXE_MAX`.
@@ -104,9 +128,24 @@ mod tests {
     #[test]
     fn boutons_recopies() {
         let mut rapport = [0u8; 11];
-        rapport[0] = 0b0101_0000; // octet 0 bits 4 et 6 = boutons 1 et 3 (nibble bas = chapeau)
+        rapport[0] = 0b0101_0000; // octet 0 bits 4 et 6 = boutons G27 1 et 3 (nibble bas = chapeau)
         let position = position_depuis_entrees(&entrees_depuis_rapport(&rapport));
-        assert_eq!(position.buttons & 0b101, 0b101); // boutons 1 et 3 → bits 0 et 2
+        // Remappage : G27 1 → vJoy 16 (bit 15), G27 3 → vJoy 15 (bit 14).
+        let attendu = (1i32 << 15) | (1i32 << 14);
+        assert_eq!(position.buttons & attendu, attendu);
+    }
+
+    #[test]
+    fn remappage_des_boutons() {
+        // Quelques correspondances de la table : G27 8 → vJoy 1, G27 21 → vJoy 3,
+        // G27 1 → vJoy 16, et le bouton 23 reste inchangé.
+        assert_eq!(super::remapper_boutons(1 << 7), 1 << 0);
+        assert_eq!(super::remapper_boutons(1 << 20), 1 << 2);
+        assert_eq!(super::remapper_boutons(1 << 0), 1 << 15);
+        assert_eq!(super::remapper_boutons(1 << 22), 1 << 22);
+        // Bijection : tous les boutons G27 1–23 armés couvrent exactement vJoy 1–23.
+        let tous = (0..23).fold(0u32, |acc, bit| acc | (1u32 << bit));
+        assert_eq!(super::remapper_boutons(tous), tous);
     }
 
     #[test]
