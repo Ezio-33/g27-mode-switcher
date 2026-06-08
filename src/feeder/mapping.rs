@@ -12,6 +12,16 @@ const POV_CENTRE: u32 = 0xFFFF_FFFF;
 /// marche arrière n'a pas de numéro HID propre (bit vendor), on lui réserve le 24.
 const NUMERO_BOUTON_MARCHE_ARRIERE: u8 = 24;
 
+/// Boutons vJoy (1-indexés) dupliquant les 4 directions cardinales du chapeau (D-pad).
+/// Le chapeau est aussi exposé en POV continu (cf. [`chapeau_vers_pov`]), mais certains
+/// jeux (Forza) ne distinguent pas les directions d'un POV : ces boutons permettent
+/// alors de binder haut/bas/gauche/droite séparément (une diagonale = deux boutons).
+/// ⚠️ Nécessite un device vJoy configuré avec **au moins 28 boutons**.
+const NUMERO_BOUTON_CHAPEAU_HAUT: u8 = 25;
+const NUMERO_BOUTON_CHAPEAU_DROITE: u8 = 26;
+const NUMERO_BOUTON_CHAPEAU_BAS: u8 = 27;
+const NUMERO_BOUTON_CHAPEAU_GAUCHE: u8 = 28;
+
 /// Remappage des boutons HID du G27 vers les numéros de boutons vJoy souhaités
 /// (préférence utilisateur). Indexé par le numéro de bouton **G27** (1–23) ; la valeur
 /// est le numéro de bouton **vJoy** émis. C'est une permutation des boutons 1–22 ; le
@@ -41,12 +51,37 @@ pub fn position_depuis_entrees(entrees: &EntreesG27) -> JoystickPositionV2 {
 }
 
 /// Masque des boutons vJoy : les boutons HID du G27 **remappés** selon
-/// [`REMAP_BOUTONS`] + la marche arrière (synthétisée depuis le levier enfoncé)
-/// ajoutée sur [`NUMERO_BOUTON_MARCHE_ARRIERE`].
+/// [`REMAP_BOUTONS`], + la marche arrière (depuis le levier enfoncé) sur
+/// [`NUMERO_BOUTON_MARCHE_ARRIERE`], + les 4 directions du chapeau en boutons.
 fn boutons_avec_marche_arriere(entrees: &EntreesG27) -> u32 {
     let mut masque = remapper_boutons(entrees.boutons.masque());
     if entrees.marche_arriere {
         masque |= 1 << (NUMERO_BOUTON_MARCHE_ARRIERE - 1);
+    }
+    masque |= boutons_chapeau(entrees.chapeau);
+    masque
+}
+
+/// Duplique les 4 directions cardinales du chapeau en boutons vJoy. Le D-pad du G27
+/// a 8 directions (`0`=haut, sens horaire jusqu'à `7`=haut-gauche, `8`=relâché) : une
+/// diagonale arme les **deux** boutons cardinaux adjacents (ex. haut-droite = haut +
+/// droite). `0` si le chapeau est relâché.
+fn boutons_chapeau(chapeau: u8) -> u32 {
+    if chapeau >= CHAPEAU_RELACHE {
+        return 0;
+    }
+    let mut masque = 0u32;
+    if matches!(chapeau, 7 | 0 | 1) {
+        masque |= 1 << (NUMERO_BOUTON_CHAPEAU_HAUT - 1);
+    }
+    if matches!(chapeau, 1..=3) {
+        masque |= 1 << (NUMERO_BOUTON_CHAPEAU_DROITE - 1);
+    }
+    if matches!(chapeau, 3..=5) {
+        masque |= 1 << (NUMERO_BOUTON_CHAPEAU_BAS - 1);
+    }
+    if matches!(chapeau, 5..=7) {
+        masque |= 1 << (NUMERO_BOUTON_CHAPEAU_GAUCHE - 1);
     }
     masque
 }
@@ -146,6 +181,33 @@ mod tests {
         // Bijection : tous les boutons G27 1–23 armés couvrent exactement vJoy 1–23.
         let tous = (0..23).fold(0u32, |acc, bit| acc | (1u32 << bit));
         assert_eq!(super::remapper_boutons(tous), tous);
+    }
+
+    #[test]
+    fn chapeau_duplique_en_boutons_cardinaux() {
+        let haut = 1u32 << (super::NUMERO_BOUTON_CHAPEAU_HAUT - 1);
+        let droite = 1u32 << (super::NUMERO_BOUTON_CHAPEAU_DROITE - 1);
+        let bas = 1u32 << (super::NUMERO_BOUTON_CHAPEAU_BAS - 1);
+        let gauche = 1u32 << (super::NUMERO_BOUTON_CHAPEAU_GAUCHE - 1);
+        // Haut (0) → bouton haut seul ; gauche (6) → bouton gauche seul.
+        assert_eq!(super::boutons_chapeau(0), haut);
+        assert_eq!(super::boutons_chapeau(6), gauche);
+        // Diagonale haut-droite (1) → haut + droite ; bas-gauche (5) → bas + gauche.
+        assert_eq!(super::boutons_chapeau(1), haut | droite);
+        assert_eq!(super::boutons_chapeau(5), bas | gauche);
+        // Relâché (8) → aucun bouton.
+        assert_eq!(super::boutons_chapeau(8), 0);
+    }
+
+    #[test]
+    fn chapeau_alimente_pov_et_boutons() {
+        // Le chapeau reste exposé en POV ET dupliqué en boutons (octet 0, nibble bas).
+        let mut rapport = [0u8; 11];
+        rapport[0] = 0; // direction haut (N)
+        let position = position_depuis_entrees(&entrees_depuis_rapport(&rapport));
+        assert_eq!(position.hats, 0, "POV haut = 0 centi-degré");
+        let haut = 1i32 << (super::NUMERO_BOUTON_CHAPEAU_HAUT - 1);
+        assert_eq!(position.buttons & haut, haut, "bouton haut aussi armé");
     }
 
     #[test]
