@@ -7,10 +7,10 @@ use crate::vjoy::JoystickPositionV2;
 const AXE_MAX: i32 = 32767;
 /// Valeur de chapeau POV « centré » (relâché) pour vJoy.
 const POV_CENTRE: u32 = 0xFFFF_FFFF;
-/// Bouton vJoy (1-indexé) assigné à la marche arrière. Les boutons 1–24 sont déjà
-/// pris par les 24 bits HID du G27 (dont les 6 vitesses, octet 2 bits 0–5 = boutons
-/// 17–22) ; la marche arrière n'a pas de bit propre, on lui réserve le bouton 25.
-const NUMERO_BOUTON_MARCHE_ARRIERE: u8 = 25;
+/// Bouton vJoy (1-indexé) assigné à la marche arrière. Les boutons 1–23 sont les vrais
+/// boutons HID du G27 (dont les 6 vitesses = boutons 13–18, octet 2 bits 0–5) ; la
+/// marche arrière n'a pas de numéro HID propre (bit vendor), on lui réserve le 24.
+const NUMERO_BOUTON_MARCHE_ARRIERE: u8 = 24;
 
 /// Convertit les entrées décodées du G27 en position vJoy.
 ///
@@ -66,7 +66,7 @@ mod tests {
     use crate::entree::{EntreesG27, entrees_depuis_rapport};
 
     fn entrees(volant: u16, accel: u8, frein: u8, embr: u8) -> EntreesG27 {
-        let mut rapport = [0u8; 10];
+        let mut rapport = [0u8; 11];
         rapport[0] = 8; // chapeau relâché (nibble bas de l'octet 0)
         let [lo, hi] = volant.to_le_bytes();
         rapport[3] = lo;
@@ -79,8 +79,14 @@ mod tests {
 
     #[test]
     fn axes_mis_a_l_echelle() {
+        // Le volant est un axe 14 bits : ses 2 bits de poids faible (boutons 21/22)
+        // sont masqués, donc le maximum décodé est 0xFFFC, pas 0xFFFF.
         let position = position_depuis_entrees(&entrees(u16::MAX, u8::MAX, 0, 0));
-        assert_eq!(position.axis_x, AXE_MAX);
+        assert!(
+            (AXE_MAX - 4..=AXE_MAX).contains(&position.axis_x),
+            "axe_x={}",
+            position.axis_x
+        );
         assert_eq!(position.axis_y, AXE_MAX);
         assert_eq!(position.axis_z, 0);
 
@@ -97,28 +103,28 @@ mod tests {
 
     #[test]
     fn boutons_recopies() {
-        let mut rapport = [0u8; 10];
-        rapport[0] = 0b0101_0000; // boutons 5 et 7 (nibble haut ; nibble bas = chapeau)
+        let mut rapport = [0u8; 11];
+        rapport[0] = 0b0101_0000; // octet 0 bits 4 et 6 = boutons 1 et 3 (nibble bas = chapeau)
         let position = position_depuis_entrees(&entrees_depuis_rapport(&rapport));
-        assert_eq!(position.buttons & 0b0101_0000, 0b0101_0000);
+        assert_eq!(position.buttons & 0b101, 0b101); // boutons 1 et 3 → bits 0 et 2
     }
 
     #[test]
-    fn marche_arriere_sur_le_bouton_25() {
+    fn marche_arriere_sur_bouton_dedie() {
         use crate::entree::{BIT_LEVIER_ENFONCE, OCTET_LEVIER_ETAT};
-        let bit_25 = 1i32 << (super::NUMERO_BOUTON_MARCHE_ARRIERE - 1);
-        // Levier au repos : le bouton 25 n'est pas armé.
+        let bit_ma = 1i32 << (super::NUMERO_BOUTON_MARCHE_ARRIERE - 1);
+        // Levier au repos : le bouton marche arrière n'est pas armé.
         let mut rapport = [0u8; 11];
         rapport[OCTET_LEVIER_ETAT] = 0x9c;
         assert_eq!(
-            position_depuis_entrees(&entrees_depuis_rapport(&rapport)).buttons & bit_25,
+            position_depuis_entrees(&entrees_depuis_rapport(&rapport)).buttons & bit_ma,
             0
         );
-        // Levier enfoncé : la marche arrière arme le bouton 25.
+        // Levier enfoncé : la marche arrière arme son bouton dédié.
         rapport[OCTET_LEVIER_ETAT] = 0x9c | BIT_LEVIER_ENFONCE;
         assert_eq!(
-            position_depuis_entrees(&entrees_depuis_rapport(&rapport)).buttons & bit_25,
-            bit_25
+            position_depuis_entrees(&entrees_depuis_rapport(&rapport)).buttons & bit_ma,
+            bit_ma
         );
     }
 
