@@ -75,6 +75,30 @@ pub fn couple_constant(banque: &BanqueEffets) -> i32 {
     borne_i64(somme * i64::from(banque.gain_global()) / GAIN_MAX)
 }
 
+/// Coefficient du **ressort** que le jeu envoie (max des effets `Ressort` en cours,
+/// `0` si aucun ou device inactif). Forza module ce coefficient avec la vitesse
+/// (fort à l'arrêt, doux en roulant) : on s'en sert pour piloter l'autocentrage
+/// matériel (cf. [`crate::ffb::ModulateurAutocentrage`]), pas une force logicielle.
+#[must_use]
+pub fn coeff_ressort(banque: &BanqueEffets) -> i32 {
+    if !banque.actif() {
+        return 0;
+    }
+    banque
+        .effets_en_cours()
+        .filter(|effet| matches!(effet.type_effet, TypeEffet::Ressort))
+        .filter_map(|effet| match &effet.params {
+            ParametresEffet::Condition {
+                coeff_pos,
+                coeff_neg,
+                ..
+            } => Some((*coeff_pos).max(*coeff_neg)),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 /// Contribution d'un seul effet (−PLAGE..PLAGE), avant pondération par le gain global.
 fn contribution(effet: &Effet, volant: EtatVolant, instant_ms: u64) -> i32 {
     match &effet.params {

@@ -48,6 +48,13 @@ pub enum DemandeFfb {
 /// Pause de la boucle quand l'alimentation est suspendue (axes en pause).
 const DELAI_PAUSE_MS: u64 = 15;
 
+/// Cadence maximale d'envoi des commandes d'autocentrage modulé (ms) ≈ 20 Hz : assez
+/// pour suivre les changements de vitesse sans saturer le bus HID.
+const PERIODE_AUTOCENTRAGE_MS: u64 = 50;
+/// Variation minimale d'amplitude d'autocentrage avant de réémettre la commande
+/// (anti-bavardage : on ignore les micro-variations).
+const SEUIL_AUTOCENTRAGE_MAJ: u16 = 0x0600;
+
 /// Erreurs au démarrage du feeder.
 #[derive(Debug, thiserror::Error)]
 pub enum ErreurFeeder {
@@ -165,6 +172,39 @@ impl Drop for Feeder {
     }
 }
 
+/// Greffe le récepteur FFB selon la demande, sur le device vJoy déjà acquis. Renvoie
+/// `(canal interne lu par le pilote en mode Pont, récepteur FFB à garder vivant,
+/// drapeau « couper l'autocentrage »)`. En mode Pont le récepteur émet vers le canal
+/// interne consommé par le [`PiloteForce`].
+fn greffer_recepteur(
+    ffb: DemandeFfb,
+    vjoy: &'static Vjoy,
+    id: u32,
+) -> (
+    Option<mpsc::Receiver<MessageFfb>>,
+    Option<RecepteurFfb>,
+    bool,
+) {
+    match ffb {
+        DemandeFfb::Aucune => (None, None, false),
+        DemandeFfb::Capture(sender) => {
+            tracing::debug!("FFB : capture des messages bruts (device vJoy n°{id})");
+            (None, Some(RecepteurFfb::enregistrer(vjoy, sender)), false)
+        }
+        DemandeFfb::Pont {
+            couper_autocentrage,
+        } => {
+            let (tx_ffb, rx_ffb) = mpsc::channel();
+            tracing::debug!("FFB : pont de force actif (device vJoy n°{id})");
+            (
+                Some(rx_ffb),
+                Some(RecepteurFfb::enregistrer(vjoy, tx_ffb)),
+                couper_autocentrage,
+            )
+        }
+    }
+}
+
 /// Corps du worker : acquiert vJoy + ouvre le G27, signale le résultat, puis recopie
 /// tant que l'alimentation est active et qu'aucun arrêt n'est demandé.
 fn boucle_feeder(
@@ -185,25 +225,7 @@ fn boucle_feeder(
     // ⚠️ ORDRE DE DÉCLARATION = ORDRE DE DROP INVERSE. `_recepteur` (FFB) déclaré
     // AVANT `_device` ⇒ droppé APRÈS lui : on relâche d'abord le device
     // (`RelinquishVJD`, qui stoppe les callbacks) PUIS on libère le userdata FFB.
-    // En mode Pont, le récepteur émet vers un canal interne lu par le `PiloteForce`.
-    let (mut entree_pont, _recepteur, couper_autocentrage) = match ffb {
-        DemandeFfb::Aucune => (None, None, false),
-        DemandeFfb::Capture(sender) => {
-            tracing::debug!("FFB : capture des messages bruts (device vJoy n°{id})");
-            (None, Some(RecepteurFfb::enregistrer(vjoy, sender)), false)
-        }
-        DemandeFfb::Pont {
-            couper_autocentrage,
-        } => {
-            let (tx_ffb, rx_ffb) = mpsc::channel();
-            tracing::debug!("FFB : pont de force actif (device vJoy n°{id})");
-            (
-                Some(rx_ffb),
-                Some(RecepteurFfb::enregistrer(vjoy, tx_ffb)),
-                couper_autocentrage,
-            )
-        }
-    };
+    let (mut entree_pont, _recepteur, couper_autocentrage) = greffer_recepteur(ffb, vjoy, id);
     // Garde RAII : relâche le device vJoy (reset + RelinquishVJD) au `Drop`, sur CE
     // thread, quel que soit le mode de sortie du worker (arrêt, erreur, panique).
     let _device = DeviceVjoyAcquis { vjoy, id };
@@ -247,6 +269,7 @@ fn boucle_feeder(
     tracing::debug!("Feeder : alimentation des axes active (device vJoy n°{id})");
 
     let debut = std::time::Instant::now();
+    let mut modulation = ModulationAutocentrage::new(couper_autocentrage);
     while !arret.load(Ordering::Relaxed) {
         if !actif.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(DELAI_PAUSE_MS));
@@ -271,10 +294,49 @@ fn boucle_feeder(
             if let Some(commande) = pilote.prochaine_commande(instant_ms) {
                 garde.envoyer(&commande);
             }
+            modulation.rafraichir(pilote, garde, instant_ms);
         }
     }
     // Drop ici (et sur tout retour/panique ci-dessus) : `lecteur`, puis `garde_force`
     // (stop + autocentrage restauré), puis `_device` (RelinquishVJD), puis `_recepteur`.
+}
+
+/// Modulation throttlée de l'autocentrage matériel dans la boucle worker : n'émet la
+/// commande de force d'autocentrage que périodiquement et sur variation sensible, pour
+/// ne pas saturer le bus HID (la force constante occupe déjà la cadence ~100 Hz).
+struct ModulationAutocentrage {
+    /// Si vrai, l'autocentrage est coupé : on n'émet jamais de commande de force.
+    couper: bool,
+    /// Dernière amplitude émise (pour ne réémettre que sur variation sensible).
+    derniere: Option<u16>,
+    /// Prochain instant (ms) où une émission est autorisée.
+    prochain_ms: u64,
+}
+
+impl ModulationAutocentrage {
+    fn new(couper: bool) -> Self {
+        Self {
+            couper,
+            derniere: None,
+            prochain_ms: 0,
+        }
+    }
+
+    /// Émet, si nécessaire, la commande d'autocentrage déduite du ressort du jeu.
+    fn rafraichir(&mut self, pilote: &PiloteForce, garde: &GardeForceG27, instant_ms: u64) {
+        if self.couper || instant_ms < self.prochain_ms {
+            return;
+        }
+        let magnitude = pilote.magnitude_autocentre();
+        if self
+            .derniere
+            .is_none_or(|precedent| magnitude.abs_diff(precedent) > SEUIL_AUTOCENTRAGE_MAJ)
+        {
+            garde.regler_autocentrage(magnitude);
+            self.derniere = Some(magnitude);
+        }
+        self.prochain_ms = instant_ms + PERIODE_AUTOCENTRAGE_MS;
+    }
 }
 
 /// Garde RAII : relâche le device vJoy (reset + `RelinquishVJD`) au `Drop`, sur le
@@ -345,6 +407,17 @@ impl GardeForceG27 {
     fn envoyer(&self, commande: &OutputReport) {
         if let Err(erreur) = report::write_report(&self.device, commande) {
             tracing::debug!("FFB : écriture de force impossible : {erreur}");
+        }
+    }
+
+    /// Règle la force de l'autocentrage matériel (ressort firmware) à `magnitude`
+    /// (0..`0xFFFF`). Sert à la modulation vitesse-dépendante du pont (fort à l'arrêt,
+    /// doux en roulant). Erreur seulement tracée (jamais bloquante).
+    fn regler_autocentrage(&self, magnitude: u16) {
+        if let Err(erreur) =
+            report::write_report(&self.device, &autocenter::strength_report(magnitude))
+        {
+            tracing::debug!("FFB : réglage de l'autocentrage impossible : {erreur}");
         }
     }
 }

@@ -15,7 +15,10 @@ use std::sync::mpsc::Receiver;
 
 use crate::report::OutputReport;
 
-use super::{BanqueEffets, MessageFfb, commande_force_constante, couple_constant};
+use super::{
+    BanqueEffets, MessageFfb, ModulateurAutocentrage, coeff_ressort, commande_force_constante,
+    couple_constant,
+};
 
 /// Période minimale entre deux envois de force (ms) ≈ 100 Hz. Le G27 a un watchdog
 /// FFB : sans réémission régulière il relâche la force ; on réémet donc à chaque
@@ -27,6 +30,8 @@ pub struct PiloteForce {
     banque: BanqueEffets,
     messages: Receiver<MessageFfb>,
     prochain_envoi_ms: u64,
+    modulateur: ModulateurAutocentrage,
+    dernier_instant_ms: u64,
 }
 
 impl PiloteForce {
@@ -37,6 +42,8 @@ impl PiloteForce {
             banque: BanqueEffets::new(),
             messages,
             prochain_envoi_ms: 0,
+            modulateur: ModulateurAutocentrage::default(),
+            dernier_instant_ms: 0,
         }
     }
 
@@ -49,11 +56,25 @@ impl PiloteForce {
         while let Ok(message) = self.messages.try_recv() {
             self.banque.appliquer(message);
         }
+        // Suit (à chaque appel, pas seulement à l'émission) l'intensité du ressort du
+        // jeu pour moduler l'autocentrage matériel — cf. [`Self::magnitude_autocentre`].
+        let ecoule = instant_ms.saturating_sub(self.dernier_instant_ms);
+        self.dernier_instant_ms = instant_ms;
+        self.modulateur
+            .appliquer(coeff_ressort(&self.banque), ecoule);
         if instant_ms < self.prochain_envoi_ms {
             return None;
         }
         self.prochain_envoi_ms = instant_ms + PERIODE_ENVOI_MS;
         Some(commande_force_constante(couple_constant(&self.banque)))
+    }
+
+    /// Amplitude d'autocentrage matériel souhaitée (0..`0xFFFF`), déduite du ressort
+    /// que le jeu envoie (fort à l'arrêt, doux en roulant). Le worker du feeder
+    /// l'envoie au G27 via `autocenter::strength_report`, séparément de la force.
+    #[must_use]
+    pub fn magnitude_autocentre(&self) -> u16 {
+        self.modulateur.magnitude()
     }
 }
 

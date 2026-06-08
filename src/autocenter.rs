@@ -24,16 +24,43 @@ use crate::report::{self, OutputReport};
 /// (`lg4ff_set_autocenter_default`, `magnitude == 0`).
 const AUTOCENTER_DISABLE: [u8; report::COMMAND_LEN] = [0xF5, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
-/// 1ʳᵉ commande de réactivation : règle la force de l'autocentrage à pleine
-/// amplitude. Réf. : `lg4ff_set_autocenter_default` pour `magnitude = 0xFFFF`,
-/// avec `expand_a` divisé par deux pour les volants non-MOMO (cas du G27), d'où
-/// les octets `0x07, 0x07, 0xFF`.
-const AUTOCENTER_ENABLE_STRENGTH: [u8; report::COMMAND_LEN] =
-    [0xFE, 0x0D, 0x07, 0x07, 0xFF, 0x00, 0x00];
-
 /// 2ᵉ commande de réactivation : active l'autocentrage. Réf. : idem (`0x14`).
 const AUTOCENTER_ENABLE_ACTIVATE: [u8; report::COMMAND_LEN] =
     [0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+
+/// Constante de la formule `lg4ff` (seuil de linéarité de l'amplitude).
+const LG4FF_SEUIL: u32 = 0xAAAA;
+
+/// Construit la commande HID réglant la **force** de l'autocentrage (`0xFE 0x0D`)
+/// pour une amplitude `magnitude` (0 = nul, `0xFFFF` = plein).
+///
+/// Reprend la formule de `lg4ff_set_autocenter_default` (réf. documentaire, kernel
+/// Linux `hid-lg4ff.c`) : deux coefficients de rampe (`expand_a`, divisé par deux
+/// pour les volants non-MOMO comme le G27) et une amplitude (`expand_b`). À
+/// `magnitude = 0xFFFF`, on retrouve les octets `0x07, 0x07, 0xFF` (pleine force).
+#[must_use]
+pub fn strength_report(magnitude: u16) -> OutputReport {
+    let m = u32::from(magnitude);
+    let (expand_a, expand_b) = if m <= LG4FF_SEUIL {
+        (0x0c * m, 0x80 * m)
+    } else {
+        (
+            0x0c * LG4FF_SEUIL + 0x06 * (m - LG4FF_SEUIL),
+            0x80 * LG4FF_SEUIL + 0xff * (m - LG4FF_SEUIL),
+        )
+    };
+    let coeff_rampe = u8::try_from((expand_a >> 1) / LG4FF_SEUIL).unwrap_or(u8::MAX);
+    let amplitude = u8::try_from(expand_b / LG4FF_SEUIL).unwrap_or(u8::MAX);
+    OutputReport::unnumbered(vec![
+        0xFE,
+        0x0D,
+        coeff_rampe,
+        coeff_rampe,
+        amplitude,
+        0x00,
+        0x00,
+    ])
+}
 
 /// Délai inséré entre les deux commandes de réactivation.
 const ENABLE_COMMAND_DELAY: Duration = Duration::from_millis(10);
@@ -94,13 +121,17 @@ pub fn disable_autocenter_with_api(api: &hidapi::HidApi) -> Result<AutocenterOut
     Ok(AutocenterOutcome { device: info })
 }
 
-/// Construit les deux commandes HID réactivant l'autocentrage (pleine force).
+/// Construit la commande HID activant l'autocentrage (`0x14`), sans changer sa force.
+#[must_use]
+pub fn activate_report() -> OutputReport {
+    OutputReport::unnumbered(AUTOCENTER_ENABLE_ACTIVATE.to_vec())
+}
+
+/// Construit les deux commandes HID réactivant l'autocentrage (pleine force) :
+/// réglage de la force (`0xFE 0x0D`, `magnitude = 0xFFFF`) puis activation (`0x14`).
 #[must_use]
 pub fn enable_autocenter_reports() -> [OutputReport; 2] {
-    [
-        OutputReport::unnumbered(AUTOCENTER_ENABLE_STRENGTH.to_vec()),
-        OutputReport::unnumbered(AUTOCENTER_ENABLE_ACTIVATE.to_vec()),
-    ]
+    [strength_report(u16::MAX), activate_report()]
 }
 
 /// Réactive l'autocentrage matériel (pleine force) du G27 natif détecté.
@@ -176,5 +207,32 @@ mod tests {
         for report in super::enable_autocenter_reports() {
             assert_eq!(report.report_id, 0x00);
         }
+    }
+
+    #[test]
+    fn strength_full_matches_legacy_constant() {
+        // À pleine amplitude, on retrouve les octets `0x07, 0x07, 0xFF` historiques.
+        assert_eq!(
+            super::strength_report(u16::MAX).to_buffer(),
+            vec![0x00u8, 0xFE, 0x0D, 0x07, 0x07, 0xFF, 0x00, 0x00]
+        );
+    }
+
+    #[test]
+    fn strength_scales_with_magnitude() {
+        // Amplitude nulle → octets de force nuls.
+        assert_eq!(
+            super::strength_report(0).to_buffer(),
+            vec![0x00u8, 0xFE, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
+        // Au seuil de linéarité (0xAAAA), amplitude = 0x80 et rampe = 0x06.
+        assert_eq!(
+            super::strength_report(0xAAAA).to_buffer(),
+            vec![0x00u8, 0xFE, 0x0D, 0x06, 0x06, 0x80, 0x00, 0x00]
+        );
+        // Force monotone : une amplitude plus forte ⇒ octet d'amplitude ≥.
+        let faible = super::strength_report(0x4000).to_buffer()[5];
+        let forte = super::strength_report(0xC000).to_buffer()[5];
+        assert!(forte > faible, "faible={faible} forte={forte}");
     }
 }
