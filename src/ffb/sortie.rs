@@ -6,17 +6,16 @@
 //! donc testable. L'écriture HID, la coupure de l'autocentrage et le `stop` garanti
 //! sont du ressort de l'appelant (le worker du feeder), seul détenteur du handle G27.
 //!
-//! ⚠️ **Sécurité** : on n'applique que les effets en **boucle ouverte** (force
-//! constante + périodique + rampe), qui ne lisent pas la position du volant et ne
-//! peuvent donc pas provoquer la rétroaction positive (volant qui claque). Les effets
-//! à boucle fermée (ressort/amortisseur…) restent écartés tant que leur signe n'est
-//! pas validé sur matériel (cf. [`crate::ffb::couple_boucle_ouverte`]).
+//! ⚠️ **Sécurité** : on n'applique que la **force constante** (boucle ouverte, validée
+//! matériel via `ffb force`). Les effets à boucle fermée (ressort/amortisseur/périodique)
+//! provoquent une oscillation violente tant que leur signe n'est pas validé : ils sont
+//! écartés au calcul (cf. [`crate::ffb::couple_constant`]).
 
 use std::sync::mpsc::Receiver;
 
 use crate::report::OutputReport;
 
-use super::{BanqueEffets, MessageFfb, commande_force_constante, couple_boucle_ouverte};
+use super::{BanqueEffets, MessageFfb, commande_force_constante, couple_constant};
 
 /// Période minimale entre deux envois de force (ms) ≈ 100 Hz. Le G27 a un watchdog
 /// FFB : sans réémission régulière il relâche la force ; on réémet donc à chaque
@@ -42,11 +41,10 @@ impl PiloteForce {
     }
 
     /// Intègre les messages FFB en attente, puis — si la période de rafraîchissement
-    /// est atteinte — renvoie la commande de force (boucle ouverte) à émettre vers le G27.
+    /// est atteinte — renvoie la commande de force constante à émettre vers le G27.
     ///
     /// `instant_ms` est une horloge monotone en millisecondes. Renvoie `None` entre
-    /// deux périodes (le throttle borne la cadence à ~100 Hz). Le périodique étant
-    /// fonction du temps, on lui passe `instant_ms`.
+    /// deux périodes (le throttle borne la cadence à ~100 Hz).
     pub fn prochaine_commande(&mut self, instant_ms: u64) -> Option<OutputReport> {
         while let Ok(message) = self.messages.try_recv() {
             self.banque.appliquer(message);
@@ -55,10 +53,7 @@ impl PiloteForce {
             return None;
         }
         self.prochain_envoi_ms = instant_ms + PERIODE_ENVOI_MS;
-        Some(commande_force_constante(couple_boucle_ouverte(
-            &self.banque,
-            instant_ms,
-        )))
+        Some(commande_force_constante(couple_constant(&self.banque)))
     }
 }
 
