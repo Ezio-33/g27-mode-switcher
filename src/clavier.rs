@@ -11,9 +11,6 @@
 //! répétition (Windows gère l'auto-répétition). Le `Drop` relâche toute touche encore
 //! enfoncée pour ne jamais laisser une touche « collée ».
 
-/// Valeur du chapeau quand le D-pad est relâché (cf. [`crate::entree::CHAPEAU_RELACHE`]).
-const CHAPEAU_RELACHE: u8 = 8;
-
 /// Scan codes **étendus** des 4 flèches (pavé directionnel).
 const SC_UP: u16 = 0x48;
 const SC_LEFT: u16 = 0x4B;
@@ -66,7 +63,7 @@ impl ClavierG27 {
     /// en n'émettant que les fronts (appui/relâché) depuis le dernier appel.
     pub fn appliquer(&mut self, chapeau: u8, boutons_vjoy: u32) {
         let cardinaux = if self.fleches_actives {
-            cardinaux(chapeau)
+            crate::entree::cardinaux_chapeau(chapeau)
         } else {
             0
         };
@@ -107,28 +104,6 @@ fn emettre_fronts(touches: &[(u8, u16)], etendue: bool, etat: &mut u8, cible: u8
 /// Borné à 32 (largeur du masque) pour éviter tout décalage de bits hors plage.
 fn bouton_arme(numero: u8, masque: u32) -> bool {
     (1..=32).contains(&numero) && masque & (1u32 << (numero - 1)) != 0
-}
-
-/// Bitmask des directions cardinales du chapeau (1=haut, 2=droite, 4=bas, 8=gauche).
-/// Une diagonale arme les deux cardinaux adjacents ; `0` si le D-pad est relâché.
-fn cardinaux(chapeau: u8) -> u8 {
-    if chapeau >= CHAPEAU_RELACHE {
-        return 0;
-    }
-    let mut masque = 0u8;
-    if matches!(chapeau, 7 | 0 | 1) {
-        masque |= 1; // haut
-    }
-    if matches!(chapeau, 1..=3) {
-        masque |= 2; // droite
-    }
-    if matches!(chapeau, 3..=5) {
-        masque |= 4; // bas
-    }
-    if matches!(chapeau, 5..=7) {
-        masque |= 8; // gauche
-    }
-    masque
 }
 
 /// Émet un appui (`appui = true`) ou un relâché (`false`) du scan code matériel `scan`.

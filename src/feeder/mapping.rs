@@ -1,6 +1,6 @@
 //! Conversion (pure) des entrées du G27 en position vJoy.
 
-use crate::entree::{CHAPEAU_RELACHE, EntreesG27};
+use crate::entree::{CHAPEAU_RELACHE, EntreesG27, cardinaux_chapeau};
 use crate::vjoy::JoystickPositionV2;
 
 /// Valeur maximale des axes vJoy (plage par défaut 0–32767).
@@ -39,6 +39,7 @@ const REMAP_BOUTONS: [u8; 24] = [
 /// curseur ; boutons recopiés tels quels ; chapeau converti en POV continu.
 #[must_use]
 pub fn position_depuis_entrees(entrees: &EntreesG27) -> JoystickPositionV2 {
+    let (stick_x, stick_y) = chapeau_vers_stick(entrees.chapeau);
     JoystickPositionV2 {
         axis_x: vers_axe(u32::from(entrees.volant), u32::from(u16::MAX)),
         axis_y: vers_axe(u32::from(entrees.accelerateur), u32::from(u8::MAX)),
@@ -46,6 +47,10 @@ pub fn position_depuis_entrees(entrees: &EntreesG27) -> JoystickPositionV2 {
         slider: vers_axe(u32::from(entrees.embrayage), u32::from(u8::MAX)),
         buttons: boutons_avec_marche_arriere(entrees).cast_signed(),
         hats: chapeau_vers_pov(entrees.chapeau),
+        // Le D-pad est aussi exposé comme un **stick** sur Rx/Ry : certains écrans
+        // (la map de Forza) se naviguent au stick analogique, pas au POV ni aux flèches.
+        axis_x_rot: stick_x,
+        axis_y_rot: stick_y,
         ..JoystickPositionV2::default()
     }
 }
@@ -62,28 +67,45 @@ fn boutons_avec_marche_arriere(entrees: &EntreesG27) -> u32 {
     masque
 }
 
-/// Duplique les 4 directions cardinales du chapeau en boutons vJoy. Le D-pad du G27
-/// a 8 directions (`0`=haut, sens horaire jusqu'à `7`=haut-gauche, `8`=relâché) : une
-/// diagonale arme les **deux** boutons cardinaux adjacents (ex. haut-droite = haut +
-/// droite). `0` si le chapeau est relâché.
+/// Duplique les 4 directions cardinales du chapeau en boutons vJoy (haut/droite/bas/
+/// gauche). Une diagonale arme les **deux** boutons adjacents ; `0` si relâché.
 fn boutons_chapeau(chapeau: u8) -> u32 {
-    if chapeau >= CHAPEAU_RELACHE {
-        return 0;
-    }
+    let cardinaux = cardinaux_chapeau(chapeau);
     let mut masque = 0u32;
-    if matches!(chapeau, 7 | 0 | 1) {
-        masque |= 1 << (NUMERO_BOUTON_CHAPEAU_HAUT - 1);
-    }
-    if matches!(chapeau, 1..=3) {
-        masque |= 1 << (NUMERO_BOUTON_CHAPEAU_DROITE - 1);
-    }
-    if matches!(chapeau, 3..=5) {
-        masque |= 1 << (NUMERO_BOUTON_CHAPEAU_BAS - 1);
-    }
-    if matches!(chapeau, 5..=7) {
-        masque |= 1 << (NUMERO_BOUTON_CHAPEAU_GAUCHE - 1);
+    for (bit, numero) in [
+        (1, NUMERO_BOUTON_CHAPEAU_HAUT),
+        (2, NUMERO_BOUTON_CHAPEAU_DROITE),
+        (4, NUMERO_BOUTON_CHAPEAU_BAS),
+        (8, NUMERO_BOUTON_CHAPEAU_GAUCHE),
+    ] {
+        if cardinaux & bit != 0 {
+            masque |= 1 << (numero - 1);
+        }
     }
     masque
+}
+
+/// Traduit le chapeau en position de **stick** sur deux axes (Rx, Ry), centré au repos.
+/// Permet de naviguer la map de Forza (qui se déplace au stick) avec le D-pad : gauche/
+/// droite → Rx, haut/bas → Ry. Une diagonale pousse les deux axes.
+fn chapeau_vers_stick(chapeau: u8) -> (i32, i32) {
+    let centre = AXE_MAX / 2;
+    let cardinaux = cardinaux_chapeau(chapeau);
+    let x = if cardinaux & 2 != 0 {
+        AXE_MAX // droite
+    } else if cardinaux & 8 != 0 {
+        0 // gauche
+    } else {
+        centre
+    };
+    let y = if cardinaux & 4 != 0 {
+        AXE_MAX // bas
+    } else if cardinaux & 1 != 0 {
+        0 // haut
+    } else {
+        centre
+    };
+    (x, y)
 }
 
 /// Applique [`REMAP_BOUTONS`] : pour chaque bouton G27 armé dans `masque_g27` (bit
@@ -197,6 +219,19 @@ mod tests {
         assert_eq!(super::boutons_chapeau(5), bas | gauche);
         // Relâché (8) → aucun bouton.
         assert_eq!(super::boutons_chapeau(8), 0);
+    }
+
+    #[test]
+    fn chapeau_alimente_le_stick() {
+        let centre = AXE_MAX / 2;
+        // Relâché (8) → stick centré sur Rx/Ry.
+        assert_eq!(super::chapeau_vers_stick(8), (centre, centre));
+        // Gauche (6) → Rx min ; droite (2) → Rx max.
+        assert_eq!(super::chapeau_vers_stick(6).0, 0);
+        assert_eq!(super::chapeau_vers_stick(2).0, AXE_MAX);
+        // Haut (0) → Ry min ; bas (4) → Ry max.
+        assert_eq!(super::chapeau_vers_stick(0).1, 0);
+        assert_eq!(super::chapeau_vers_stick(4).1, AXE_MAX);
     }
 
     #[test]

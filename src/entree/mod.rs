@@ -140,6 +140,31 @@ fn boutons_depuis_rapport(rapport: &[u8]) -> u32 {
     boutons
 }
 
+/// Décompose une valeur de chapeau (`0`=haut, sens horaire jusqu'à `7`=haut-gauche ;
+/// `≥8` = relâché) en bitmask des 4 directions cardinales : **1=haut, 2=droite, 4=bas,
+/// 8=gauche**. Une diagonale arme les deux cardinaux adjacents ; `0` si relâché.
+/// Mutualisé par le mapping vJoy (boutons + stick) et l'injection clavier.
+#[must_use]
+pub fn cardinaux_chapeau(chapeau: u8) -> u8 {
+    if chapeau >= CHAPEAU_RELACHE {
+        return 0;
+    }
+    let mut masque = 0u8;
+    if matches!(chapeau, 7 | 0 | 1) {
+        masque |= 1; // haut
+    }
+    if matches!(chapeau, 1..=3) {
+        masque |= 2; // droite
+    }
+    if matches!(chapeau, 3..=5) {
+        masque |= 4; // bas
+    }
+    if matches!(chapeau, 5..=7) {
+        masque |= 8; // gauche
+    }
+    masque
+}
+
 /// Lit un octet du rapport (0 si hors limites).
 fn octet(rapport: &[u8], index: usize) -> u8 {
     rapport.get(index).copied().unwrap_or(0)
