@@ -138,6 +138,11 @@ pub struct Pont {
     /// (« friction des pneus »). Ce ressort est open-loop : aucun risque d'oscillation.
     /// À mettre à `true` seulement si une couche FFB complète prend le relais.
     pub couper_autocentrage_ffb: bool,
+    /// Traduire le D-pad du G27 en **flèches clavier** pendant le pont. Utile quand le
+    /// G27 est masqué (pour le FFB) : certains jeux (Forza) ne naviguent leurs menus
+    /// qu'au clavier ou avec un volant reconnu, pas avec un device vJoy générique.
+    /// Effet de bord : frappes clavier globales (fenêtre au premier plan).
+    pub chapeau_vers_clavier: bool,
 }
 
 impl Default for Pont {
@@ -146,6 +151,7 @@ impl Default for Pont {
             id_vjoy: ID_VJOY_DEFAUT,
             masquer_g27_au_demarrage: true,
             couper_autocentrage_ffb: false,
+            chapeau_vers_clavier: false,
         }
     }
 }

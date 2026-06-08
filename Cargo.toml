@@ -34,6 +34,8 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Console",
     "Win32_System_IO",
     "Win32_System_Registry",
+    # Injection de touches clavier (D-pad → flèches) via SendInput (module `clavier`).
+    "Win32_UI_Input_KeyboardAndMouse",
 ] }
 
 [features]

@@ -14,6 +14,7 @@ pub use detection::{Composant, Prerequis, detecter};
 
 use std::sync::mpsc::Sender;
 
+pub use crate::feeder::OptionsPont;
 use crate::feeder::{self, DemandeFfb, Feeder};
 use crate::ffb::MessageFfb;
 use crate::hidhide::{self, MasquageGarde};
@@ -83,8 +84,8 @@ impl Pont {
     /// Comme [`demarrer`](Pont::demarrer), mais active le **pont FFB complet** : les
     /// effets reçus pilotent la force du G27 (`stop` garanti à l'arrêt).
     ///
-    /// `couper_autocentrage` : couper ou non le ressort firmware pendant le pont
-    /// (le garder donne une résistance/centrage à l'arrêt — « friction des pneus »).
+    /// `options` regroupe les réglages du pont (couper l'autocentrage, traduire le
+    /// D-pad en flèches clavier).
     ///
     /// # Errors
     ///
@@ -92,15 +93,9 @@ impl Pont {
     pub fn demarrer_pont_ffb(
         id_vjoy: u32,
         masquer: bool,
-        couper_autocentrage: bool,
+        options: OptionsPont,
     ) -> Result<Self, ErreurPont> {
-        Self::demarrer_interne(
-            id_vjoy,
-            masquer,
-            DemandeFfb::Pont {
-                couper_autocentrage,
-            },
-        )
+        Self::demarrer_interne(id_vjoy, masquer, DemandeFfb::Pont(options))
     }
 
     /// Assemble le pont (feeder + masquage) avec la demande FFB voulue.

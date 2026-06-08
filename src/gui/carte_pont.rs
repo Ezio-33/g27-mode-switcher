@@ -237,16 +237,38 @@ impl CartePont {
         {
             config.pont.masquer_g27_au_demarrage = masquer;
         }
+        ui.add_space(6.0);
+        let mut clavier = config.pont.chapeau_vers_clavier;
+        if ui
+            .checkbox(
+                &mut clavier,
+                RichText::new("D-pad → flèches clavier")
+                    .size(13.0)
+                    .color(theme::TEXT),
+            )
+            .on_hover_text(
+                "Traduit la croix directionnelle du G27 en flèches ↑↓←→ du clavier.\n\
+                 Utile quand le G27 est masqué : permet de naviguer les menus et la map \
+                 de Forza (qui n'utilise pas le D-pad d'un device vJoy). Frappes clavier \
+                 globales (fenêtre au premier plan). À appliquer avant de démarrer le pont.",
+            )
+            .changed()
+        {
+            config.pont.chapeau_vers_clavier = clavier;
+        }
         ui.add_space(12.0);
         if bouton_or(ui, "Démarrer le pont").clicked() {
             let id = config.pont.id_vjoy;
             let masquer = config.pont.masquer_g27_au_demarrage;
-            let couper_autocentrage = config.pont.couper_autocentrage_ffb;
+            let options = pont::OptionsPont {
+                couper_autocentrage: config.pont.couper_autocentrage_ffb,
+                chapeau_clavier: config.pont.chapeau_vers_clavier,
+            };
             let (tx, rx) = mpsc::channel();
             // Acquisition vJoy hors du thread GUI (cf. en-tête du module). Pont FFB
             // complet : le retour de force du jeu est recopié vers le G27.
             std::thread::spawn(move || {
-                let _ = tx.send(Pont::demarrer_pont_ffb(id, masquer, couper_autocentrage));
+                let _ = tx.send(Pont::demarrer_pont_ffb(id, masquer, options));
             });
             self.demarrage = Some(rx);
             log.push(LineKind::Info, "Démarrage du pont demandé\u{2026}");

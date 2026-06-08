@@ -25,6 +25,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::autocenter;
+use crate::clavier::ChapeauClavier;
 use crate::entree::{ErreurLecture, LecteurG27, entrees_depuis_rapport};
 use crate::ffb::{MessageFfb, PiloteForce, RecepteurFfb, commande_stop_forces};
 use crate::report::{self, OutputReport};
@@ -40,9 +41,18 @@ pub enum DemandeFfb {
     /// Capture seule : transmet les messages FFB bruts (debug `ffb capturer`).
     Capture(Sender<MessageFfb>),
     /// Pont complet : consomme les messages et **pilote la force** du G27 (Phase 5).
-    /// `couper_autocentrage` : si `true`, coupe le ressort firmware pendant le pont ;
-    /// sinon on le garde actif (résistance/centrage à l'arrêt, sans risque d'oscillation).
-    Pont { couper_autocentrage: bool },
+    Pont(OptionsPont),
+}
+
+/// Options du mode pont (au-delà du retour de force lui-même).
+#[derive(Clone, Copy, Default)]
+pub struct OptionsPont {
+    /// Si `true`, coupe le ressort firmware pendant le pont ; sinon on le garde actif
+    /// (résistance/centrage à l'arrêt, sans risque d'oscillation).
+    pub couper_autocentrage: bool,
+    /// Si `true`, traduit le D-pad en flèches clavier (navigation menus/map Forza,
+    /// quand le G27 est masqué). Cf. [`crate::clavier`].
+    pub chapeau_clavier: bool,
 }
 
 /// Pause de la boucle quand l'alimentation est suspendue (axes en pause).
@@ -174,8 +184,8 @@ impl Drop for Feeder {
 
 /// Greffe le récepteur FFB selon la demande, sur le device vJoy déjà acquis. Renvoie
 /// `(canal interne lu par le pilote en mode Pont, récepteur FFB à garder vivant,
-/// drapeau « couper l'autocentrage »)`. En mode Pont le récepteur émet vers le canal
-/// interne consommé par le [`PiloteForce`].
+/// options du pont)`. En mode Pont le récepteur émet vers le canal interne consommé
+/// par le [`PiloteForce`].
 fn greffer_recepteur(
     ffb: DemandeFfb,
     vjoy: &'static Vjoy,
@@ -183,23 +193,25 @@ fn greffer_recepteur(
 ) -> (
     Option<mpsc::Receiver<MessageFfb>>,
     Option<RecepteurFfb>,
-    bool,
+    OptionsPont,
 ) {
     match ffb {
-        DemandeFfb::Aucune => (None, None, false),
+        DemandeFfb::Aucune => (None, None, OptionsPont::default()),
         DemandeFfb::Capture(sender) => {
             tracing::debug!("FFB : capture des messages bruts (device vJoy n°{id})");
-            (None, Some(RecepteurFfb::enregistrer(vjoy, sender)), false)
+            (
+                None,
+                Some(RecepteurFfb::enregistrer(vjoy, sender)),
+                OptionsPont::default(),
+            )
         }
-        DemandeFfb::Pont {
-            couper_autocentrage,
-        } => {
+        DemandeFfb::Pont(options) => {
             let (tx_ffb, rx_ffb) = mpsc::channel();
             tracing::debug!("FFB : pont de force actif (device vJoy n°{id})");
             (
                 Some(rx_ffb),
                 Some(RecepteurFfb::enregistrer(vjoy, tx_ffb)),
-                couper_autocentrage,
+                options,
             )
         }
     }
@@ -225,7 +237,7 @@ fn boucle_feeder(
     // ⚠️ ORDRE DE DÉCLARATION = ORDRE DE DROP INVERSE. `_recepteur` (FFB) déclaré
     // AVANT `_device` ⇒ droppé APRÈS lui : on relâche d'abord le device
     // (`RelinquishVJD`, qui stoppe les callbacks) PUIS on libère le userdata FFB.
-    let (mut entree_pont, _recepteur, couper_autocentrage) = greffer_recepteur(ffb, vjoy, id);
+    let (mut entree_pont, _recepteur, options) = greffer_recepteur(ffb, vjoy, id);
     // Garde RAII : relâche le device vJoy (reset + RelinquishVJD) au `Drop`, sur CE
     // thread, quel que soit le mode de sortie du worker (arrêt, erreur, panique).
     let _device = DeviceVjoyAcquis { vjoy, id };
@@ -245,7 +257,7 @@ fn boucle_feeder(
     // Priorité physique absolue (cf. `GardeForceG27::drop`).
     let mut pilote: Option<PiloteForce> = None;
     let garde_force: Option<GardeForceG27> = match entree_pont.take() {
-        Some(rx) => match GardeForceG27::activer(&api, couper_autocentrage) {
+        Some(rx) => match GardeForceG27::activer(&api, options.couper_autocentrage) {
             Ok(garde) => {
                 pilote = Some(PiloteForce::new(rx));
                 Some(garde)
@@ -269,7 +281,10 @@ fn boucle_feeder(
     tracing::debug!("Feeder : alimentation des axes active (device vJoy n°{id})");
 
     let debut = std::time::Instant::now();
-    let mut modulation = ModulationAutocentrage::new(couper_autocentrage);
+    let mut modulation = ModulationAutocentrage::new(options.couper_autocentrage);
+    // D-pad → flèches clavier (navigation menus/map Forza) si demandé. Le `Drop`
+    // (fin de boucle) relâche toute flèche encore enfoncée.
+    let mut clavier = options.chapeau_clavier.then(ChapeauClavier::new);
     while !arret.load(Ordering::Relaxed) {
         if !actif.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(DELAI_PAUSE_MS));
@@ -280,6 +295,9 @@ fn boucle_feeder(
                 let entrees = entrees_depuis_rapport(lecteur.rapport());
                 let mut position = position_depuis_entrees(&entrees);
                 let _ = vjoy.mettre_a_jour(id, &mut position);
+                if let Some(clavier) = clavier.as_mut() {
+                    clavier.appliquer(entrees.chapeau);
+                }
             }
             Ok(false) => {}
             // Volant débranché ou erreur HID : on met l'alimentation en pause (le

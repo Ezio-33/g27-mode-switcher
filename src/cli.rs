@@ -869,9 +869,12 @@ fn run_ffb_pont(id: Option<u32>, sans_masquage: bool) -> ExitCode {
     let config = config::Config::charger();
     let id_vjoy = id.unwrap_or(config.pont.id_vjoy);
     let masquer = !sans_masquage && config.pont.masquer_g27_au_demarrage;
-    let couper_autocentrage = config.pont.couper_autocentrage_ffb;
+    let options = pont::OptionsPont {
+        couper_autocentrage: config.pont.couper_autocentrage_ffb,
+        chapeau_clavier: config.pont.chapeau_vers_clavier,
+    };
 
-    let pont = match pont::Pont::demarrer_pont_ffb(id_vjoy, masquer, couper_autocentrage) {
+    let pont = match pont::Pont::demarrer_pont_ffb(id_vjoy, masquer, options) {
         Ok(pont) => pont,
         Err(erreur) => {
             eprintln!("Erreur : {erreur}");
@@ -886,12 +889,15 @@ fn run_ffb_pont(id: Option<u32>, sans_masquage: bool) -> ExitCode {
         } else {
             "visible"
         },
-        if couper_autocentrage {
+        if options.couper_autocentrage {
             "coupé"
         } else {
             "actif (résistance à l'arrêt)"
         }
     );
+    if options.chapeau_clavier {
+        println!("D-pad → flèches clavier activé (navigation menus/map).");
+    }
     println!(
         "Lancez un jeu : le retour de force est recopié vers le volant. \
          ⚠️ Gardez la main sur le volant pour le premier essai."

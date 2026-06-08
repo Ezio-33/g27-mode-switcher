@@ -7,7 +7,7 @@
 use super::{ANGLE_MAX, ANGLE_MIN, Config, ID_VJOY_MAX, ID_VJOY_MIN, VERBOSITES};
 
 /// Clés modifiables via `config set` / lisibles via `config get`.
-pub const CLES_MODIFIABLES: [&str; 8] = [
+pub const CLES_MODIFIABLES: [&str; 9] = [
     "angle_par_defaut",
     "appliquer_angle_au_switch",
     "desactiver_autocentrage_au_switch",
@@ -16,6 +16,7 @@ pub const CLES_MODIFIABLES: [&str; 8] = [
     "id_vjoy",
     "masquer_g27_au_demarrage",
     "couper_autocentrage_ffb",
+    "chapeau_vers_clavier",
 ];
 
 /// Erreur de lecture/écriture d'une clé de configuration.
@@ -23,7 +24,7 @@ pub const CLES_MODIFIABLES: [&str; 8] = [
 pub enum ErreurCle {
     /// La clé demandée n'existe pas.
     #[error(
-        "clé inconnue : « {0} ». Clés valides : angle_par_defaut, appliquer_angle_au_switch, desactiver_autocentrage_au_switch, mode_souhaite, verbosite, id_vjoy, masquer_g27_au_demarrage, couper_autocentrage_ffb"
+        "clé inconnue : « {0} ». Clés valides : angle_par_defaut, appliquer_angle_au_switch, desactiver_autocentrage_au_switch, mode_souhaite, verbosite, id_vjoy, masquer_g27_au_demarrage, couper_autocentrage_ffb, chapeau_vers_clavier"
     )]
     Inconnue(String),
     /// La valeur fournie n'est pas valide pour cette clé.
@@ -54,6 +55,7 @@ impl Config {
             "id_vjoy" => Ok(self.pont.id_vjoy.to_string()),
             "masquer_g27_au_demarrage" => Ok(self.pont.masquer_g27_au_demarrage.to_string()),
             "couper_autocentrage_ffb" => Ok(self.pont.couper_autocentrage_ffb.to_string()),
+            "chapeau_vers_clavier" => Ok(self.pont.chapeau_vers_clavier.to_string()),
             _ => Err(ErreurCle::Inconnue(cle.to_owned())),
         }
     }
@@ -103,6 +105,9 @@ impl Config {
             }
             "couper_autocentrage_ffb" => {
                 self.pont.couper_autocentrage_ffb = parse_bool(cle, valeur)?;
+            }
+            "chapeau_vers_clavier" => {
+                self.pont.chapeau_vers_clavier = parse_bool(cle, valeur)?;
             }
             _ => return Err(ErreurCle::Inconnue(cle.to_owned())),
         }
