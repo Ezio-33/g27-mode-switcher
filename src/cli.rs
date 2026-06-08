@@ -1,5 +1,6 @@
 //! Définition et exécution de l'interface en ligne de commande (clap).
 
+use std::io::Write as _;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -104,14 +105,19 @@ enum PontAction {
 }
 
 /// Actions de la sous-commande `ffb`.
-#[derive(Debug, Clone, Copy, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 enum FfbAction {
-    /// Capture et affiche les paquets FFB que le jeu envoie au device vJoy (debug).
+    /// Capture les paquets FFB que le jeu envoie au device vJoy (debug).
     /// Le device doit avoir « Enable Effects » activé. Arrêt : fermez la console.
     Capturer {
         /// Device vJoy à écouter (1–16). Défaut : `id_vjoy` de la config.
         #[arg(long)]
         id: Option<u32>,
+        /// Enregistre les paquets dans ce fichier (un par ligne, vidé à chaque écriture).
+        /// À privilégier : la redirection shell `> fichier` est inopérante avec la
+        /// console hybride de l'application (sortie réattachée à la console).
+        #[arg(long)]
+        fichier: Option<String>,
     },
     /// Démarre le pont FFB complet : feeder vJoy + masquage + retour de force du jeu
     /// vers le G27 (autocentrage coupé). Arrêt : fermez la console (volant remis au neutre).
@@ -847,7 +853,7 @@ fn run_feeder(id: Option<u32>, sans_masquage: bool) -> ExitCode {
 /// Sous-commande `ffb` : aiguille vers l'action de diagnostic FFB.
 fn run_ffb(action: FfbAction) -> ExitCode {
     match action {
-        FfbAction::Capturer { id } => run_ffb_capturer(id),
+        FfbAction::Capturer { id, fichier } => run_ffb_capturer(id, fichier),
         FfbAction::Pont { id, sans_masquage } => run_ffb_pont(id, sans_masquage),
         FfbAction::Force { valeur } => run_ffb_force(valeur),
     }
@@ -905,10 +911,19 @@ fn run_ffb_pont(id: Option<u32>, sans_masquage: bool) -> ExitCode {
 /// qu'à un volant vJoy actif (axes alimentés). L'acquisition + le callback vivent sur
 /// le thread worker du feeder. Arrêt par fermeture de la console (`CTRL_CLOSE`) →
 /// démasquage + `RelinquishVJD` garantis (Drop du pont).
-fn run_ffb_capturer(id: Option<u32>) -> ExitCode {
+fn run_ffb_capturer(id: Option<u32>, fichier: Option<String>) -> ExitCode {
     let config = config::Config::charger();
     let id_vjoy = id.unwrap_or(config.pont.id_vjoy);
     let masquer = config.pont.masquer_g27_au_demarrage;
+
+    // Ouvre le fichier de sortie d'abord (échec rapide, avant d'acquérir vJoy).
+    let mut sortie = match ouvrir_fichier_capture(fichier) {
+        Ok(sortie) => sortie,
+        Err(erreur) => {
+            eprintln!("Erreur : {erreur}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     let (tx, paquets) = std::sync::mpsc::channel();
     let pont = match pont::Pont::demarrer_capture_ffb(id_vjoy, masquer, tx) {
@@ -931,21 +946,54 @@ fn run_ffb_capturer(id: Option<u32>) -> ExitCode {
         "Le device doit avoir « Enable Effects » activé (Configure vJoy) ; \
          envoyez des effets depuis un jeu."
     );
+    if let Some((chemin, _)) = &sortie {
+        println!("Enregistrement dans « {chemin} » (une ligne par paquet).");
+    }
     println!("Pour arrêter : FERMEZ cette fenêtre console.");
 
     installer_handler_arret();
+    let mut total = 0u64;
     while !ARRET_DEMANDE.load(Ordering::SeqCst) {
         while let Ok(message) = paquets.try_recv() {
-            println!("FFB reçu — {message:?}");
+            total += 1;
+            ecrire_paquet_capture(&mut sortie, &message);
         }
         std::thread::sleep(Duration::from_millis(20));
     }
 
-    println!("Arrêt de la capture FFB…");
+    println!("Arrêt de la capture FFB… ({total} paquets reçus)");
     drop(pont); // arrête le feeder (libère vJoy) PUIS démasque le G27 (ordre des champs).
     println!("Capture FFB arrêtée, G27 démasqué, device vJoy libéré.");
     NETTOYAGE_FINI.store(true, Ordering::SeqCst);
     ExitCode::SUCCESS
+}
+
+/// Ouvre le fichier de capture si un chemin est fourni, en écrivant un en-tête.
+/// Renvoie `Ok(None)` (sortie console seule) si aucun chemin n'est donné.
+fn ouvrir_fichier_capture(
+    chemin: Option<String>,
+) -> Result<Option<(String, std::fs::File)>, std::io::Error> {
+    let Some(chemin) = chemin else {
+        return Ok(None);
+    };
+    let mut fichier = std::fs::File::create(&chemin)?;
+    writeln!(
+        fichier,
+        "# Capture FFB G27 Mode Switcher — un paquet par ligne"
+    )?;
+    fichier.flush()?;
+    Ok(Some((chemin, fichier)))
+}
+
+/// Écrit un paquet FFB capturé : sur la console toujours, et dans le fichier (vidé
+/// immédiatement pour survivre à une fermeture brutale de la console) si demandé.
+fn ecrire_paquet_capture(sortie: &mut Option<(String, std::fs::File)>, message: &ffb::MessageFfb) {
+    println!("FFB reçu — {message:?}");
+    if let Some((_, fichier)) = sortie
+        && let Err(erreur) = writeln!(fichier, "{message:?}").and_then(|()| fichier.flush())
+    {
+        eprintln!("Attention : écriture du fichier de capture impossible : {erreur}");
+    }
 }
 
 /// Garantit la **remise au neutre** du volant (stop des forces) à la sortie, quel
