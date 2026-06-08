@@ -9,9 +9,7 @@ use tracing_subscriber::EnvFilter;
 
 use g27_mode_switcher::entree::{self, EntreesG27, LecteurG27};
 use g27_mode_switcher::keymapper::{self, Bouton, EtatBoutons};
-use g27_mode_switcher::{
-    autocenter, config, feeder, ffb, hid, hidhide, pont, range, report, switcher,
-};
+use g27_mode_switcher::{autocenter, config, ffb, hid, hidhide, pont, range, report, switcher};
 
 /// Bascule un volant Logitech G27 vers son mode natif, sans pilote propriétaire.
 #[derive(Debug, Parser)]
@@ -481,7 +479,14 @@ fn run_config_get(config: &config::Config, cle: &str) -> ExitCode {
 ///
 /// Boucle jusqu'à interruption (Ctrl+C) ; `formatter` produit la ligne affichée à
 /// partir du rapport brut, et la ligne n'est réimprimée que lorsqu'elle change.
-fn boucle_lecture(en_tete: &str, formatter: impl Fn(&[u8]) -> String) -> ExitCode {
+/// `cle` produit la signature de déduplication : une nouvelle ligne n'est imprimée
+/// que lorsque cette signature change. Cela permet d'ignorer le bruit des axes
+/// (volant/pédales qui tremblent de ±1) pour ne réagir qu'aux vrais changements.
+fn boucle_lecture(
+    en_tete: &str,
+    cle: impl Fn(&[u8]) -> Vec<u8>,
+    formatter: impl Fn(&[u8]) -> String,
+) -> ExitCode {
     println!("{en_tete}\n");
 
     let api = match hidapi::HidApi::new() {
@@ -499,14 +504,14 @@ fn boucle_lecture(en_tete: &str, formatter: impl Fn(&[u8]) -> String) -> ExitCod
         }
     };
 
-    let mut derniere = String::new();
+    let mut derniere = Vec::new();
     loop {
         match lecteur.lire(200) {
             Ok(true) => {
-                let ligne = formatter(lecteur.rapport());
-                if ligne != derniere {
-                    println!("{ligne}");
-                    derniere = ligne;
+                let signature = cle(lecteur.rapport());
+                if signature != derniere {
+                    println!("{}", formatter(lecteur.rapport()));
+                    derniere = signature;
                 }
             }
             Ok(false) => {}
@@ -516,6 +521,19 @@ fn boucle_lecture(en_tete: &str, formatter: impl Fn(&[u8]) -> String) -> ExitCod
             }
         }
     }
+}
+
+/// Clé de déduplication « boutons seuls » : ne garde que la portion non bruitée du
+/// rapport. Les axes (à partir de l'octet 3 : volant, pédales, axes analogiques)
+/// sont réduits à leur quartet haut pour absorber le tremblement de ±1, tandis que
+/// les octets de boutons (0–2) gardent leur pleine résolution. Une nouvelle ligne ne
+/// s'imprime donc que lorsqu'un bouton (ou un bit de poids fort) change réellement.
+fn cle_boutons(rapport: &[u8]) -> Vec<u8> {
+    rapport
+        .iter()
+        .enumerate()
+        .map(|(index, &octet)| if index < 3 { octet } else { octet & 0xF0 })
+        .collect()
 }
 
 /// Lit en direct les boutons du G27 (debug/calibration du keymapper).
@@ -529,7 +547,7 @@ fn run_boutons() -> ExitCode {
          Engagez chaque rapport pour repérer le bit qui s'arme.",
         keymapper::OCTET_DEBUT_BOUTONS
     );
-    boucle_lecture(&en_tete, |rapport| {
+    boucle_lecture(&en_tete, cle_boutons, |rapport| {
         format_rapport(rapport, keymapper::boutons_depuis_rapport(rapport))
     })
 }
@@ -549,7 +567,14 @@ fn run_entrees(verbose: u8) -> ExitCode {
         "Lecture des entrées du G27 natif (Ctrl+C pour quitter).\n\
          Bougez le volant et les pédales pour caler les offsets d'axes."
     };
-    boucle_lecture(en_tete, move |rapport| {
+    // En mode diagnostic, on déduplique sur les boutons seuls (axes ignorés) pour
+    // que l'affichage ne défile pas : presser un bouton produit alors UNE ligne.
+    let cle: fn(&[u8]) -> Vec<u8> = if verbose > 0 {
+        cle_boutons
+    } else {
+        <[u8]>::to_vec
+    };
+    boucle_lecture(en_tete, cle, move |rapport| {
         let entrees = entree::entrees_depuis_rapport(rapport);
         if verbose > 0 {
             format_entrees_diagnostic(rapport, entrees)
@@ -609,21 +634,28 @@ fn format_entrees(rapport: &[u8], entrees: EntreesG27) -> String {
     )
 }
 
-/// Variante diagnostic de [`format_entrees`] (mode `-v`) : ajoute, sous la ligne
-/// décodée, **tous** les bits armés du rapport brut (indices absolus, octet × 8 + bit)
-/// et les boutons effectivement recopiés vers vJoy par le feeder. Comparer les deux
-/// localise un bit ignoré par le parsing : un bit armé sans bouton vJoy correspondant
-/// désigne l'octet/bit que le décodage ne lit pas.
+/// Variante diagnostic de [`format_entrees`] (mode `-v`) : sous la ligne décodée,
+/// liste les bits armés du rapport au format `octet:bit`, en **séparant** les octets
+/// de boutons (0–2, lus par le parsing) des octets d'axes (≥3). Un bit qui s'arme
+/// dans la partie « axes » en pressant un bouton désigne exactement l'octet/bit que
+/// le décodage ignore — c'est là que vivent les boutons manquants.
 fn format_entrees_diagnostic(rapport: &[u8], entrees: EntreesG27) -> String {
     let base = format_entrees(rapport, entrees);
-    let bits = bits_armes(rapport);
-    let masque_vjoy = feeder::position_depuis_entrees(&entrees)
-        .buttons
-        .cast_unsigned();
-    let boutons_vjoy: Vec<u8> = (1u8..=24)
-        .filter(|numero| masque_vjoy & (1u32 << (numero - 1)) != 0)
-        .collect();
-    format!("{base}\n    bits bruts armés = {bits:?}  →  boutons vJoy mappés = {boutons_vjoy:?}")
+    let mut boutons = Vec::new();
+    let mut axes = Vec::new();
+    for (octet, valeur) in rapport.iter().enumerate() {
+        for bit in 0u8..8 {
+            if valeur & (1u8 << bit) != 0 {
+                let cible = if octet < 3 { &mut boutons } else { &mut axes };
+                cible.push(format!("{octet}:{bit}"));
+            }
+        }
+    }
+    format!(
+        "{base}\n    bits boutons (octets 0-2) = [{}]  |  bits axes (octets ≥3) = [{}]",
+        boutons.join(" "),
+        axes.join(" "),
+    )
 }
 
 /// Demande d'arrêt posée par le handler console (Ctrl+C / fermeture), lue par la
