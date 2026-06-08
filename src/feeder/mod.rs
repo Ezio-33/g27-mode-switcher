@@ -40,7 +40,9 @@ pub enum DemandeFfb {
     /// Capture seule : transmet les messages FFB bruts (debug `ffb capturer`).
     Capture(Sender<MessageFfb>),
     /// Pont complet : consomme les messages et **pilote la force** du G27 (Phase 5).
-    Pont,
+    /// `couper_autocentrage` : si `true`, coupe le ressort firmware pendant le pont ;
+    /// sinon on le garde actif (résistance/centrage à l'arrêt, sans risque d'oscillation).
+    Pont { couper_autocentrage: bool },
 }
 
 /// Pause de la boucle quand l'alimentation est suspendue (axes en pause).
@@ -94,7 +96,7 @@ impl Feeder {
     /// Selon `ffb`, un récepteur FFB est greffé sur le **même** device acquis (sur le
     /// thread worker) : en [`DemandeFfb::Capture`] les messages bruts sont transmis sur
     /// le `Sender` ; en [`DemandeFfb::Pont`] ils pilotent la force du G27 (autocentrage
-    /// coupé, `stop` garanti à l'arrêt).
+    /// gardé ou coupé selon `couper_autocentrage`, `stop` garanti à l'arrêt).
     ///
     /// # Errors
     ///
@@ -184,16 +186,22 @@ fn boucle_feeder(
     // AVANT `_device` ⇒ droppé APRÈS lui : on relâche d'abord le device
     // (`RelinquishVJD`, qui stoppe les callbacks) PUIS on libère le userdata FFB.
     // En mode Pont, le récepteur émet vers un canal interne lu par le `PiloteForce`.
-    let (mut entree_pont, _recepteur) = match ffb {
-        DemandeFfb::Aucune => (None, None),
+    let (mut entree_pont, _recepteur, couper_autocentrage) = match ffb {
+        DemandeFfb::Aucune => (None, None, false),
         DemandeFfb::Capture(sender) => {
             tracing::debug!("FFB : capture des messages bruts (device vJoy n°{id})");
-            (None, Some(RecepteurFfb::enregistrer(vjoy, sender)))
+            (None, Some(RecepteurFfb::enregistrer(vjoy, sender)), false)
         }
-        DemandeFfb::Pont => {
+        DemandeFfb::Pont {
+            couper_autocentrage,
+        } => {
             let (tx_ffb, rx_ffb) = mpsc::channel();
             tracing::debug!("FFB : pont de force actif (device vJoy n°{id})");
-            (Some(rx_ffb), Some(RecepteurFfb::enregistrer(vjoy, tx_ffb)))
+            (
+                Some(rx_ffb),
+                Some(RecepteurFfb::enregistrer(vjoy, tx_ffb)),
+                couper_autocentrage,
+            )
         }
     };
     // Garde RAII : relâche le device vJoy (reset + RelinquishVJD) au `Drop`, sur CE
@@ -215,7 +223,7 @@ fn boucle_feeder(
     // Priorité physique absolue (cf. `GardeForceG27::drop`).
     let mut pilote: Option<PiloteForce> = None;
     let garde_force: Option<GardeForceG27> = match entree_pont.take() {
-        Some(rx) => match GardeForceG27::activer(&api) {
+        Some(rx) => match GardeForceG27::activer(&api, couper_autocentrage) {
             Ok(garde) => {
                 pilote = Some(PiloteForce::new(rx));
                 Some(garde)
@@ -292,16 +300,23 @@ fn relacher(vjoy: &Vjoy, id: u32) {
 ///
 /// Détient un handle d'écriture dédié au G27 (distinct de celui du lecteur ; les
 /// handles HID concurrents au G27 sont validés depuis la Phase 4). À la construction,
-/// elle **coupe l'autocentrage matériel** (sinon le ressort firmware lutterait contre
-/// le FFB du jeu). Au `Drop` — garanti sur tous les chemins (arrêt, erreur, panique) —
-/// elle remet d'abord le **volant au neutre** (`stop`) puis **restaure l'autocentrage**.
+/// elle règle l'autocentrage matériel selon `couper_autocentrage` (coupé si une couche
+/// FFB complète prend le relais, sinon **activé** pour garder une résistance à l'arrêt).
+/// Au `Drop` — garanti sur tous les chemins (arrêt, erreur, panique) — elle remet
+/// d'abord le **volant au neutre** (`stop`) puis (ré)active l'autocentrage matériel.
 struct GardeForceG27 {
     device: hidapi::HidDevice,
 }
 
 impl GardeForceG27 {
-    /// Ouvre le handle d'écriture du G27 natif et coupe l'autocentrage matériel.
-    fn activer(api: &hidapi::HidApi) -> Result<Self, ErreurFeeder> {
+    /// Ouvre le handle d'écriture du G27 natif et règle l'autocentrage matériel.
+    ///
+    /// `couper_autocentrage` : si `true`, coupe le ressort firmware (cas d'une couche
+    /// FFB complète) ; sinon on **active** l'autocentrage pour garder une résistance/
+    /// centrage à l'arrêt (la force constante du jeu est nulle quand la voiture est
+    /// immobile). Ce ressort est piloté par le firmware (open-loop) : aucune
+    /// rétroaction, donc aucun risque d'oscillation.
+    fn activer(api: &hidapi::HidApi, couper_autocentrage: bool) -> Result<Self, ErreurFeeder> {
         let info = crate::hid::find_native_g27(api).map_err(|manque| match manque {
             crate::hid::NativeLookup::NotNative => ErreurFeeder::Lecture(ErreurLecture::NotNative),
             crate::hid::NativeLookup::NoG27 => ErreurFeeder::Lecture(ErreurLecture::NoG27),
@@ -309,9 +324,18 @@ impl GardeForceG27 {
         let device = api
             .open_path(info.path.as_c_str())
             .map_err(|erreur| ErreurFeeder::Lecture(ErreurLecture::Ouverture(erreur)))?;
-        if let Err(erreur) = report::write_report(&device, &autocenter::disable_autocenter_report())
-        {
-            tracing::warn!("FFB : désactivation de l'autocentrage impossible : {erreur}");
+        if couper_autocentrage {
+            if let Err(erreur) =
+                report::write_report(&device, &autocenter::disable_autocenter_report())
+            {
+                tracing::warn!("FFB : désactivation de l'autocentrage impossible : {erreur}");
+            }
+        } else {
+            for commande in autocenter::enable_autocenter_reports() {
+                if let Err(erreur) = report::write_report(&device, &commande) {
+                    tracing::warn!("FFB : activation de l'autocentrage impossible : {erreur}");
+                }
+            }
         }
         Ok(Self { device })
     }

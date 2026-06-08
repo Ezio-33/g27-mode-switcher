@@ -869,8 +869,9 @@ fn run_ffb_pont(id: Option<u32>, sans_masquage: bool) -> ExitCode {
     let config = config::Config::charger();
     let id_vjoy = id.unwrap_or(config.pont.id_vjoy);
     let masquer = !sans_masquage && config.pont.masquer_g27_au_demarrage;
+    let couper_autocentrage = config.pont.couper_autocentrage_ffb;
 
-    let pont = match pont::Pont::demarrer_pont_ffb(id_vjoy, masquer) {
+    let pont = match pont::Pont::demarrer_pont_ffb(id_vjoy, masquer, couper_autocentrage) {
         Ok(pont) => pont,
         Err(erreur) => {
             eprintln!("Erreur : {erreur}");
@@ -878,12 +879,17 @@ fn run_ffb_pont(id: Option<u32>, sans_masquage: bool) -> ExitCode {
         }
     };
     println!(
-        "Pont FFB actif — device vJoy #{} alimenté, G27 {}, autocentrage coupé.",
+        "Pont FFB actif — device vJoy #{} alimenté, G27 {}, autocentrage {}.",
         pont.id_vjoy(),
         if pont.g27_masque() {
             "masqué au jeu"
         } else {
             "visible"
+        },
+        if couper_autocentrage {
+            "coupé"
+        } else {
+            "actif (résistance à l'arrêt)"
         }
     );
     println!(

@@ -132,6 +132,12 @@ pub struct Pont {
     pub id_vjoy: u32,
     /// Masquer le G27 réel au jeu au démarrage du pont.
     pub masquer_g27_au_demarrage: bool,
+    /// Couper l'autocentrage matériel pendant le pont FFB. Par défaut **non** :
+    /// le FFB ne fournit que la force constante (nulle à l'arrêt), donc on garde
+    /// le ressort firmware actif pour conserver une résistance/centrage à l'arrêt
+    /// (« friction des pneus »). Ce ressort est open-loop : aucun risque d'oscillation.
+    /// À mettre à `true` seulement si une couche FFB complète prend le relais.
+    pub couper_autocentrage_ffb: bool,
 }
 
 impl Default for Pont {
@@ -139,6 +145,7 @@ impl Default for Pont {
         Self {
             id_vjoy: ID_VJOY_DEFAUT,
             masquer_g27_au_demarrage: true,
+            couper_autocentrage_ffb: false,
         }
     }
 }

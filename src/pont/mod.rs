@@ -81,14 +81,26 @@ impl Pont {
     }
 
     /// Comme [`demarrer`](Pont::demarrer), mais active le **pont FFB complet** : les
-    /// effets reçus pilotent la force du G27 (autocentrage coupé pendant le pont,
-    /// `stop` garanti à l'arrêt).
+    /// effets reçus pilotent la force du G27 (`stop` garanti à l'arrêt).
+    ///
+    /// `couper_autocentrage` : couper ou non le ressort firmware pendant le pont
+    /// (le garder donne une résistance/centrage à l'arrêt — « friction des pneus »).
     ///
     /// # Errors
     ///
     /// Voir [`demarrer`](Pont::demarrer).
-    pub fn demarrer_pont_ffb(id_vjoy: u32, masquer: bool) -> Result<Self, ErreurPont> {
-        Self::demarrer_interne(id_vjoy, masquer, DemandeFfb::Pont)
+    pub fn demarrer_pont_ffb(
+        id_vjoy: u32,
+        masquer: bool,
+        couper_autocentrage: bool,
+    ) -> Result<Self, ErreurPont> {
+        Self::demarrer_interne(
+            id_vjoy,
+            masquer,
+            DemandeFfb::Pont {
+                couper_autocentrage,
+            },
+        )
     }
 
     /// Assemble le pont (feeder + masquage) avec la demande FFB voulue.
