@@ -81,6 +81,9 @@ const PERIODE_AUTOCENTRAGE_MS: u64 = 50;
 /// Variation minimale d'amplitude d'autocentrage avant de réémettre la commande
 /// (anti-bavardage : on ignore les micro-variations).
 const SEUIL_AUTOCENTRAGE_MAJ: u16 = 0x0600;
+/// Réémission périodique de l'autocentrage même sans changement (ms) : certains
+/// firmwares relâchent le ressort sans rafraîchissement régulier — on le maintient.
+const RAFRAICHISSEMENT_AUTOCENTRAGE_MS: u64 = 250;
 
 /// Erreurs au démarrage du feeder.
 #[derive(Debug, thiserror::Error)]
@@ -392,6 +395,8 @@ struct ModulationAutocentrage {
     derniere: Option<u16>,
     /// Prochain instant (ms) où une émission est autorisée.
     prochain_ms: u64,
+    /// Instant (ms) du dernier envoi effectif (pour le rafraîchissement périodique).
+    dernier_envoi_ms: u64,
 }
 
 impl ModulationAutocentrage {
@@ -400,23 +405,29 @@ impl ModulationAutocentrage {
             couper,
             derniere: None,
             prochain_ms: 0,
+            dernier_envoi_ms: 0,
         }
     }
 
-    /// Émet, si nécessaire, la commande d'autocentrage déduite du ressort du jeu.
+    /// Émet, si nécessaire, la commande d'autocentrage déduite du ressort du jeu. On
+    /// réémet sur variation sensible **ou** périodiquement (watchdog) pour maintenir le
+    /// ressort firmware, qui s'affaiblit sinon à l'arrêt / en ligne droite.
     fn rafraichir(&mut self, pilote: &PiloteForce, garde: &GardeForceG27, instant_ms: u64) {
         if self.couper || instant_ms < self.prochain_ms {
             return;
         }
+        self.prochain_ms = instant_ms + PERIODE_AUTOCENTRAGE_MS;
         let magnitude = pilote.magnitude_autocentre();
-        if self
+        let variation = self
             .derniere
-            .is_none_or(|precedent| magnitude.abs_diff(precedent) > SEUIL_AUTOCENTRAGE_MAJ)
-        {
+            .is_none_or(|precedent| magnitude.abs_diff(precedent) > SEUIL_AUTOCENTRAGE_MAJ);
+        let watchdog =
+            instant_ms.saturating_sub(self.dernier_envoi_ms) >= RAFRAICHISSEMENT_AUTOCENTRAGE_MS;
+        if variation || watchdog {
             garde.regler_autocentrage(magnitude);
             self.derniere = Some(magnitude);
+            self.dernier_envoi_ms = instant_ms;
         }
-        self.prochain_ms = instant_ms + PERIODE_AUTOCENTRAGE_MS;
     }
 }
 
