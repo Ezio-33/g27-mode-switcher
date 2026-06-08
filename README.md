@@ -8,14 +8,21 @@ Bascule un volant **Logitech G27** de son mode dégradé par défaut vers son
 propriétaire** — donc **compatible avec HVCI / Memory Integrity** activé sur
 Windows 11.
 
-> ℹ️ La v0.2.0 débloque les **axes, l'angle et l'autocentrage** du mode natif,
-> mais **pas le retour de force dynamique des jeux** (qui requiert une couche
-> pilote) — voir [Retour de force (FFB)](#retour-de-force-ffb). Le FFB complet
-> est prévu pour la v0.3.0, sans désactiver HVCI.
-
-> **État : `v0.2.0` — nouvelle architecture HID native.**
-> L'outil parle au volant via l'**API HID native** du système (plus aucun
-> pilote à installer, **plus de Zadig**). Il suffit de lancer l'`.exe`.
+> **État : `v0.3.0` — application adaptative « LGS-like », toujours sans pilote.**
+> En plus de la bascule en mode natif (axes, angle, autocentrage de la `v0.2.0`),
+> la `v0.3.0` apporte une **interface graphique**, un **pont vJoy** qui recopie le
+> volant vers une manette virtuelle (en masquant le G27 réel au jeu via HidHide),
+> le **mapping complet des boutons** (boutons façade, **boîte de vitesses en H** +
+> marche arrière, **remappage** des numéros), et un **retour de force** issu du jeu
+> (force constante + **autocentrage modulé par la vitesse** : ferme à l'arrêt, doux
+> en roulant). Tout cela **sans désactiver HVCI**.
+>
+> ⚠️ Le FFB est **partiel et en cours d'affinage** : la force constante (poids de la
+> route) et l'autocentrage fonctionnent ; les vibrations fines (collisions/hors-piste)
+> restent à calibrer. Voir [Retour de force (FFB)](#retour-de-force-ffb).
+>
+> Tout passe par l'**API HID native** du système (aucun pilote à installer, **plus de
+> Zadig**) ; le pont FFB nécessite en plus **vJoy** + **HidHide** (détectés au lancement).
 > Si vous veniez de la `v0.1.0` (qui utilisait WinUSB/Zadig), voir
 > [Migration depuis la v0.1.0](#migration-depuis-la-v010).
 
@@ -422,57 +429,43 @@ g27-mode-switcher switch --disable-autocenter
 
 ## Retour de force (FFB)
 
-> ⚠️ **Limitation importante de la v0.2.0 : pas de FFB dynamique des jeux.**
+> ✅ **Nouveau en v0.3.0 : un retour de force du jeu, partiel, sans LGS ni HVCI désactivé.**
 
 Le G27 communique son retour de force via un **protocole FFB propriétaire
-Logitech** (commandes spécifiques au-dessus du HID). En mode HID natif **sans
-pilote dédié**, voici ce qui fonctionne et ce qui ne fonctionne pas :
+Logitech** (commandes spécifiques au-dessus du HID). Le FFB dynamique nécessite une
+**couche logicielle qui traduit les effets DirectInput du jeu en commandes FFB
+Logitech** — c'est exactement ce que faisait **LGS**. La `v0.3.0` fournit cette
+couche via le [**pont vJoy**](#pont-vjoy-recopie-dentrée--masquage) : le jeu envoie
+ses effets au device virtuel, l'outil les capte et les rejoue sur le G27 réel.
 
-| Fonctionnalité | En HID natif (v0.2.0) |
+| Fonctionnalité | En HID natif (v0.3.0) |
 | --- | --- |
-| Volant, pédales, boutons, boîte H | ✅ Oui |
+| Volant, pédales, boutons, boîte H + marche arrière | ✅ Oui |
 | Angle de rotation (`set-range`) | ✅ Oui |
 | Autocentrage matériel (`set-autocenter`) | ✅ Oui |
-| **FFB dynamique du jeu** (effets de route, perte d'adhérence, trottoirs…) | ❌ **Non** |
+| **Force constante du jeu** (poids de la route, auto-alignement en virage) | ✅ Oui (via le pont) |
+| **Autocentrage modulé par la vitesse** (ferme à l'arrêt, doux en roulant) | ✅ Oui (via le pont) |
+| **Vibrations fines** (collisions, trottoirs, hors-piste) | 🚧 En cours de calibration |
 
-Le FFB dynamique nécessite une **couche logicielle qui traduit les effets
-DirectInput du jeu en commandes FFB Logitech** — c'est exactement ce que faisait
-le pilote **LGS**. Sans cette couche, le firmware ne reçoit jamais les effets et
-le volant reste inerte côté FFB.
+Le pont applique la **force constante** du jeu (validée matériel) et pilote
+l'**autocentrage matériel** à partir du ressort que le jeu module avec la vitesse
+— d'où une résistance ferme à l'arrêt qui s'adoucit en roulant. Les **effets
+périodiques** (vibrations de collision/hors-piste) ne sont pas encore restitués
+proprement et restent à calibrer.
 
-L'**autocentrage matériel** (réglable via `set-autocenter`) fournit une **force
-de centrage basique** — utile pour ne pas avoir un volant mou — mais **ce n'est
-pas du vrai retour de force** : il ignore ce qui se passe dans le jeu.
-
-### En attendant : deux options pour le FFB
-
-1. **Logitech Gaming Software (LGS)** : restaure le FFB complet, **mais** installe
-   des composants noyau **incompatibles avec HVCI** — il faut alors **désactiver
-   Memory Integrity**, ce que ce projet cherche justement à éviter.
-2. **Attendre la v0.3.0** (voir [Feuille de route](#feuille-de-route)).
-
-### Ce que prévoit la v0.3.0
-
-Un **FFB complet en option**, sans LGS et **sans désactiver HVCI**, en s'appuyant
-sur **vJoy + HidHide** (pilotes **signés WHQL**, donc compatibles Memory
-Integrity) pour exposer un périphérique virtuel et router les effets FFB vers le
-G27. Objectif : retrouver un retour de force de jeu tout en restant HVCI-safe.
-
-La **première brique** est déjà disponible : le [**pont vJoy**](#pont-vjoy-recopie-dentrée--masquage)
-recopie les entrées du G27 vers un device virtuel et masque le volant réel au jeu.
-Le **vrai retour de force dynamique** (routage des effets vers le G27) arrive à
-l'étape suivante (Phase 5) — voir la [feuille de route](#feuille-de-route).
+> 💡 **Alternative — Logitech Gaming Software (LGS)** : restaure un FFB complet,
+> **mais** installe des composants noyau **incompatibles avec HVCI** (il faut alors
+> désactiver Memory Integrity, ce que ce projet cherche justement à éviter). Le
+> pont vJoy de la `v0.3.0` vise un retour de force **HVCI-safe**.
 
 ## Pont vJoy (recopie d'entrée + masquage)
 
-Depuis la **v0.3.0**, l'outil peut faire le **pont** entre le G27 réel et un
-**device vJoy virtuel** : il recopie en continu les axes et boutons du volant vers
-vJoy, tout en **masquant le G27 réel** au jeu (via HidHide) pour éviter le
-doublon. C'est la fondation sur laquelle s'appuiera le **vrai retour de force** en
-Phase 5 (voir [Retour de force](#retour-de-force-ffb)).
-
-> ⚠️ Le pont **ne fournit pas encore de FFB dynamique** : il recopie les entrées
-> et prépare le terrain. Le routage des effets de jeu vers le G27 arrive en Phase 5.
+Depuis la **v0.3.0**, l'outil fait le **pont** entre le G27 réel et un **device
+vJoy virtuel** : il recopie en continu les axes et boutons du volant vers vJoy,
+tout en **masquant le G27 réel** au jeu (via HidHide) pour éviter le doublon. Sur
+cette base, le pont **capte les effets FFB** que le jeu envoie au device virtuel et
+les **rejoue sur le G27** (force constante + autocentrage modulé — voir
+[Retour de force](#retour-de-force-ffb)).
 
 ### Prérequis
 
@@ -487,9 +480,9 @@ installer une fois (x64) :
 La GUI **détecte automatiquement** ces deux composants et vous indique lesquels
 manquent ; l'état se met à jour tout seul après installation.
 
-> 💡 Le pont n'utilise **pas** le FFB de vJoy (Phase 4). Si le popup vJoy
-> « RegisterClassEx failed » apparaît au démarrage, décochez **« Enable Effects »**
-> (FFB) sur le device dans *Configure vJoy* : sans canal FFB, plus de popup.
+> 💡 Pour le **retour de force**, activez **« Enable Effects »** (FFB) sur le device
+> dans *Configure vJoy* : c'est par ce canal que le jeu envoie ses effets, captés
+> puis rejoués sur le G27. (Sans FFB, le pont se limite à la recopie des entrées.)
 
 ### Utilisation
 
@@ -641,15 +634,20 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 10. ✅ `v0.2.0` : passage à l'API HID native (`hidapi`), suppression de Zadig,
     commandes `set-range` et `set-autocenter`, réglage automatique de l'angle à
     900° après bascule (autocentrage matériel laissé actif par défaut).
-11. 🚧 `v0.3.0` (en cours) : outil adaptatif « façon LGS », sans LGS et **HVCI
-    préservé**. Avancement :
+11. ✅ `v0.3.0` : outil adaptatif « façon LGS », sans LGS et **HVCI préservé**.
     - ✅ **Interface graphique** (eframe/egui).
     - ✅ **Configuration TOML** persistante.
     - ✅ **Pont vJoy** : recopie d'entrée G27 → device vJoy + **masquage HidHide**
-      du volant réel (fondation du FFB), avec démasquage garanti à l'arrêt.
-    - 🔜 **FFB dynamique complet** : routage des effets de jeu vers le G27 (Phase 5).
+      du volant réel, avec démasquage garanti à l'arrêt.
+    - ✅ **Mapping complet des entrées** : axes, chapeau (POV), boutons façade,
+      **boîte de vitesses en H** (vitesses + marche arrière) et **remappage** des
+      numéros de boutons — décodage calé sur le **descripteur HID réel** du G27.
+    - ✅ **Retour de force partiel** : **force constante** du jeu rejouée sur le G27
+      + **autocentrage modulé par la vitesse** (ferme à l'arrêt, doux en roulant).
+    - 🚧 **Vibrations fines** (collisions/hors-piste) : à calibrer.
     - 🔜 **Keymapper** (boîte H → clavier) pour les jeux sans remap.
-    - 🔜 **Réactivation paramétrable** de l'autocentrage (`set-autocenter on`).
+    - 🔜 **Démarrage automatique** avec Windows ; réactivation paramétrable de
+      l'autocentrage (`set-autocenter on`).
 
 ## Références
 
