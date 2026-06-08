@@ -872,6 +872,8 @@ fn run_ffb_pont(id: Option<u32>, sans_masquage: bool) -> ExitCode {
     let options = pont::OptionsPont {
         couper_autocentrage: config.pont.couper_autocentrage_ffb,
         chapeau_clavier: config.pont.chapeau_vers_clavier,
+        bouton_valider: config.pont.bouton_valider,
+        bouton_retour: config.pont.bouton_retour,
     };
 
     let pont = match pont::Pont::demarrer_pont_ffb(id_vjoy, masquer, options) {

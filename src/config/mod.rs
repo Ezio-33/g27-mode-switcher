@@ -143,6 +143,11 @@ pub struct Pont {
     /// qu'au clavier ou avec un volant reconnu, pas avec un device vJoy générique.
     /// Effet de bord : frappes clavier globales (fenêtre au premier plan).
     pub chapeau_vers_clavier: bool,
+    /// Bouton **vJoy** (1-indexé) qui envoie **Entrée** au clavier pour valider dans les
+    /// menus (`0` = aucun). Complète `chapeau_vers_clavier` (qui ne fait que naviguer).
+    pub bouton_valider: u8,
+    /// Bouton **vJoy** (1-indexé) qui envoie **Échap** au clavier (retour ; `0` = aucun).
+    pub bouton_retour: u8,
 }
 
 impl Default for Pont {
@@ -152,6 +157,8 @@ impl Default for Pont {
             masquer_g27_au_demarrage: true,
             couper_autocentrage_ffb: false,
             chapeau_vers_clavier: false,
+            bouton_valider: 0,
+            bouton_retour: 0,
         }
     }
 }
@@ -258,6 +265,9 @@ impl Config {
             self.fenetre.hauteur = HAUTEUR_DEFAUT;
         }
         self.pont.id_vjoy = self.pont.id_vjoy.clamp(ID_VJOY_MIN, ID_VJOY_MAX);
+        // Boutons clavier : 0 = aucun, sinon 1..=32 (largeur du masque de boutons vJoy).
+        self.pont.bouton_valider = self.pont.bouton_valider.min(32);
+        self.pont.bouton_retour = self.pont.bouton_retour.min(32);
     }
 }
 

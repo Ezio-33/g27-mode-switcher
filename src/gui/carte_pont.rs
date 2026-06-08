@@ -256,6 +256,11 @@ impl CartePont {
         {
             config.pont.chapeau_vers_clavier = clavier;
         }
+        if config.pont.chapeau_vers_clavier {
+            ui.add_space(4.0);
+            champ_bouton_clavier(ui, "Valider → Entrée", &mut config.pont.bouton_valider);
+            champ_bouton_clavier(ui, "Retour → Échap", &mut config.pont.bouton_retour);
+        }
         ui.add_space(12.0);
         if bouton_or(ui, "Démarrer le pont").clicked() {
             let id = config.pont.id_vjoy;
@@ -263,6 +268,8 @@ impl CartePont {
             let options = pont::OptionsPont {
                 couper_autocentrage: config.pont.couper_autocentrage_ffb,
                 chapeau_clavier: config.pont.chapeau_vers_clavier,
+                bouton_valider: config.pont.bouton_valider,
+                bouton_retour: config.pont.bouton_retour,
             };
             let (tx, rx) = mpsc::channel();
             // Acquisition vJoy hors du thread GUI (cf. en-tête du module). Pont FFB
@@ -274,6 +281,27 @@ impl CartePont {
             log.push(LineKind::Info, "Démarrage du pont demandé\u{2026}");
         }
     }
+}
+
+/// Ligne de réglage d'un bouton clavier : libellé + sélecteur du numéro de bouton vJoy
+/// (`0` = aucun). L'utilisateur lit le numéro dans vJoy Monitor / sa configuration.
+fn champ_bouton_clavier(ui: &mut egui::Ui, libelle: &str, numero: &mut u8) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(libelle).size(12.0).color(theme::TEXT_MUTED));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add(
+                egui::DragValue::new(numero)
+                    .range(0..=32)
+                    .custom_formatter(|n, _| {
+                        if n == 0.0 {
+                            "aucun".to_owned()
+                        } else {
+                            format!("#{n}")
+                        }
+                    }),
+            );
+        });
+    });
 }
 
 /// Bouton d'action doré pleine largeur (style « Démarrer »).

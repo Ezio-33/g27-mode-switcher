@@ -25,7 +25,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::autocenter;
-use crate::clavier::ChapeauClavier;
+use crate::clavier::ClavierG27;
 use crate::entree::{ErreurLecture, LecteurG27, entrees_depuis_rapport};
 use crate::ffb::{MessageFfb, PiloteForce, RecepteurFfb, commande_stop_forces};
 use crate::report::{self, OutputReport};
@@ -53,6 +53,10 @@ pub struct OptionsPont {
     /// Si `true`, traduit le D-pad en flèches clavier (navigation menus/map Forza,
     /// quand le G27 est masqué). Cf. [`crate::clavier`].
     pub chapeau_clavier: bool,
+    /// Bouton vJoy (1-indexé) déclenchant **Entrée** au clavier (`0` = aucun).
+    pub bouton_valider: u8,
+    /// Bouton vJoy (1-indexé) déclenchant **Échap** au clavier (`0` = aucun).
+    pub bouton_retour: u8,
 }
 
 /// Pause de la boucle quand l'alimentation est suspendue (axes en pause).
@@ -282,9 +286,16 @@ fn boucle_feeder(
 
     let debut = std::time::Instant::now();
     let mut modulation = ModulationAutocentrage::new(options.couper_autocentrage);
-    // D-pad → flèches clavier (navigation menus/map Forza) si demandé. Le `Drop`
-    // (fin de boucle) relâche toute flèche encore enfoncée.
-    let mut clavier = options.chapeau_clavier.then(ChapeauClavier::new);
+    // Traductions clavier (D-pad → flèches, boutons → Entrée/Échap) si demandées. Le
+    // `Drop` (fin de boucle) relâche toute touche encore enfoncée.
+    let mut clavier = {
+        let injecteur = ClavierG27::new(
+            options.chapeau_clavier,
+            options.bouton_valider,
+            options.bouton_retour,
+        );
+        injecteur.utile().then_some(injecteur)
+    };
     while !arret.load(Ordering::Relaxed) {
         if !actif.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(DELAI_PAUSE_MS));
@@ -296,7 +307,7 @@ fn boucle_feeder(
                 let mut position = position_depuis_entrees(&entrees);
                 let _ = vjoy.mettre_a_jour(id, &mut position);
                 if let Some(clavier) = clavier.as_mut() {
-                    clavier.appliquer(entrees.chapeau);
+                    clavier.appliquer(entrees.chapeau, position.buttons.cast_unsigned());
                 }
             }
             Ok(false) => {}
