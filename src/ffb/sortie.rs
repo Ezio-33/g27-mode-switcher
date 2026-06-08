@@ -96,12 +96,17 @@ mod tests {
     }
 
     #[test]
-    fn banque_vide_renvoie_le_stop() {
+    fn banque_vide_renvoie_une_force_neutre() {
         let (_tx, rx) = mpsc::channel();
         let mut pilote = PiloteForce::new(rx);
-        // Aucun effet en cours ⇒ couple 0 ⇒ commande de stop (volant neutre).
+        // Aucun effet ⇒ couple 0 ⇒ force constante NEUTRE (pas un stop, qui couperait
+        // l'autocentrage matériel actif en parallèle).
         assert_eq!(
             pilote.prochaine_commande(0).unwrap().to_buffer(),
+            crate::ffb::commande_force_constante(0).to_buffer()
+        );
+        assert_ne!(
+            pilote.prochaine_commande(10).unwrap().to_buffer(),
             crate::ffb::commande_stop_forces().to_buffer()
         );
     }

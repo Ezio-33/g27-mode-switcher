@@ -50,9 +50,11 @@ const SENS_POSITIF_VERS_DROITE: bool = false;
 /// `couple` (−PLAGE..PLAGE).
 ///
 /// Le couple est borné à la plage, puis converti en niveau firmware (`0x01..=0xFF`,
-/// `0x80` = neutre). Si le niveau retombe sur le neutre (`couple` proche de 0), on
-/// renvoie la commande de **stop** plutôt qu'une force nulle explicite — exactement
-/// comme le pilote Linux.
+/// `0x80` = neutre). On émet **toujours** une force constante (`0x11`), même neutre
+/// (`niveau = 0x80`) : contrairement au pilote Linux, on **n'envoie pas** le `stop`
+/// (`0x13`) quand le couple est nul, car il **couperait aussi le ressort d'autocentrage
+/// matériel** qui tourne en parallèle (centrage devenu très faible à l'arrêt et en ligne
+/// droite). Le `0x13` reste réservé à l'arrêt explicite (cf. [`commande_stop_forces`]).
 #[must_use]
 pub fn commande_force_constante(couple: i32) -> OutputReport {
     let couple = couple.clamp(-PLAGE, PLAGE);
@@ -62,9 +64,6 @@ pub fn commande_force_constante(couple: i32) -> OutputReport {
         -couple
     };
     let niveau = (NIVEAU_NEUTRE + oriente * AMPLITUDE_MAX / PLAGE).clamp(NIVEAU_MIN, NIVEAU_MAX);
-    if niveau == NIVEAU_NEUTRE {
-        return commande_stop_forces();
-    }
     OutputReport::unnumbered(vec![
         FORCE_CONSTANTE_CMD[0],
         FORCE_CONSTANTE_CMD[1],
@@ -102,9 +101,14 @@ mod tests {
     }
 
     #[test]
-    fn couple_nul_remet_au_neutre() {
-        // couple 0 ⇒ niveau == 0x80 ⇒ commande de stop (pas de force explicite).
+    fn couple_nul_donne_une_force_neutre_pas_un_stop() {
+        // couple 0 ⇒ niveau == 0x80 ⇒ force constante NEUTRE (0x11), PAS un stop (0x13) :
+        // un 0x13 couperait l'autocentrage matériel qui tourne en parallèle.
         assert_eq!(
+            commande_force_constante(0).to_buffer(),
+            vec![0x00, 0x11, 0x08, 0x80, 0x80, 0x00, 0x00, 0x00]
+        );
+        assert_ne!(
             commande_force_constante(0).to_buffer(),
             commande_stop_forces().to_buffer()
         );
