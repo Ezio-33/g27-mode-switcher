@@ -34,6 +34,19 @@ const MASQUE_BOUTONS_OCTET0: u8 = 0xf0;
 /// `0..CHAPEAU_RELACHE` sont les 8 directions ; `CHAPEAU_RELACHE` (et au-delà)
 /// signifie « centré ».
 pub const CHAPEAU_RELACHE: u8 = 8;
+/// Octet de la position **X** du levier de la boîte en H (axe analogique). Sans
+/// LGS, le G27 publie la position brute du levier ; c'est LGS qui la convertit
+/// normalement en boutons de vitesse. **Validé matériel.**
+pub const OCTET_LEVIER_X: usize = 8;
+/// Octet de la position **Y** du levier de la boîte en H (axe analogique).
+/// **Validé matériel.**
+pub const OCTET_LEVIER_Y: usize = 9;
+/// Octet d'état du levier de la boîte en H. **Validé matériel.**
+pub const OCTET_LEVIER_ETAT: usize = 10;
+/// Masque du bit « levier enfoncé » dans [`OCTET_LEVIER_ETAT`] : le levier poussé
+/// vers le bas, geste qui engage la marche arrière sur le G27. **Validé matériel**
+/// (octet 10 : `0x9c` au repos → `0xdc` enfoncé, soit ce bit).
+pub const BIT_LEVIER_ENFONCE: u8 = 0x40;
 /// Nombre de boutons du G27 (lus sur 3 octets, boutons 1–24).
 const NB_BOUTONS: u8 = 24;
 

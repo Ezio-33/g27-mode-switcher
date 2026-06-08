@@ -63,6 +63,8 @@ enum Command {
     Boutons,
     /// Lit en direct les entrées complètes du G27 (axes + boutons, debug feeder vJoy).
     Entrees,
+    /// Calibration de la boîte en H : affiche la position X/Y du levier par vitesse.
+    Levier,
     /// Démarre le pont (feeder vJoy + masquage du G27). Ctrl+C pour arrêter.
     Feeder {
         /// Device vJoy à alimenter (1–16). Défaut : `id_vjoy` de la config.
@@ -224,6 +226,7 @@ fn dispatch(command: Command, config: config::Config, verbose: u8) -> ExitCode {
         Command::Config { action } => run_config(action, config),
         Command::Boutons => run_boutons(),
         Command::Entrees => run_entrees(verbose),
+        Command::Levier => run_levier(),
         Command::Feeder { id, sans_masquage } => run_feeder(id, sans_masquage),
         Command::Hidhide { action } => run_hidhide(action),
         Command::Pont { action } => run_pont(action),
@@ -596,6 +599,48 @@ fn run_entrees(verbose: u8) -> ExitCode {
             format_entrees(rapport, entrees)
         }
     })
+}
+
+/// Calibration de la boîte en H : relève la position X/Y du levier par vitesse.
+///
+/// Sans LGS, le G27 publie la position **analogique** du levier (octets X/Y) au lieu
+/// de boutons de vitesse. Cet outil affiche cette position de façon stable — une
+/// ligne par région — pour relever le couple (X, Y) de chaque vitesse et l'état
+/// « enfoncé » (marche arrière). Ces relevés alimenteront la détection de vitesse.
+fn run_levier() -> ExitCode {
+    let en_tete = "Calibration de la boîte en H du G27 (Ctrl+C pour quitter).\n\
+         Engagez et MAINTENEZ chaque vitesse (1 à 6) puis la marche arrière, quelques secondes.\n\
+         Notez le couple (X, Y) et l'état « enfoncé » de chaque position, plus le point mort.";
+    boucle_lecture(en_tete, cle_levier, format_levier)
+}
+
+/// Lit un octet du rapport (0 si hors limites).
+fn octet_rapport(rapport: &[u8], index: usize) -> u8 {
+    rapport.get(index).copied().unwrap_or(0)
+}
+
+/// Clé de déduplication du levier : quartet haut de X et de Y + bit « enfoncé ».
+/// Stable quand le levier est tenu dans une vitesse → une ligne par position.
+fn cle_levier(rapport: &[u8]) -> Vec<u8> {
+    vec![
+        octet_rapport(rapport, entree::OCTET_LEVIER_X) & 0xF0,
+        octet_rapport(rapport, entree::OCTET_LEVIER_Y) & 0xF0,
+        octet_rapport(rapport, entree::OCTET_LEVIER_ETAT) & entree::BIT_LEVIER_ENFONCE,
+    ]
+}
+
+/// Formate la position du levier : rapport brut + X/Y (décimal et hexa) + enfoncé.
+fn format_levier(rapport: &[u8]) -> String {
+    let x = octet_rapport(rapport, entree::OCTET_LEVIER_X);
+    let y = octet_rapport(rapport, entree::OCTET_LEVIER_Y);
+    let enfonce =
+        octet_rapport(rapport, entree::OCTET_LEVIER_ETAT) & entree::BIT_LEVIER_ENFONCE != 0;
+    let hex: Vec<String> = rapport.iter().map(|octet| format!("{octet:02x}")).collect();
+    format!(
+        "[{hex}]  levier X={x:>3} (0x{x:02x})  Y={y:>3} (0x{y:02x})  enfoncé={enfonce_txt}",
+        hex = hex.join(" "),
+        enfonce_txt = if enfonce { "OUI" } else { "non" },
+    )
 }
 
 /// Formate un rapport HID pour la calibration : hex, bits armés, rapports reconnus.
