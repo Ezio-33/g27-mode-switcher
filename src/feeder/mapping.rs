@@ -1,6 +1,6 @@
 //! Conversion (pure) des entrées du G27 en position vJoy.
 
-use crate::entree::EntreesG27;
+use crate::entree::{CHAPEAU_RELACHE, EntreesG27};
 use crate::vjoy::JoystickPositionV2;
 
 /// Valeur maximale des axes vJoy (plage par défaut 0–32767).
@@ -35,13 +35,14 @@ fn vers_axe(valeur: u32, max_entree: u32) -> i32 {
     i32::try_from(mis_a_l_echelle).unwrap_or(AXE_MAX)
 }
 
-/// Convertit le chapeau du G27 (0 = relâché, 1–8 = directions) en POV continu
-/// vJoy (centi-degrés : 0, 4500, …, 31500 ; `POV_CENTRE` si relâché).
+/// Convertit le chapeau du G27 (`0–7` = 8 directions, `0` = haut sens horaire ;
+/// [`CHAPEAU_RELACHE`] et au-delà = relâché) en POV continu vJoy (centi-degrés :
+/// 0, 4500, …, 31500 ; `POV_CENTRE` si relâché).
 fn chapeau_vers_pov(chapeau: u8) -> u32 {
-    if chapeau == 0 || chapeau > 8 {
+    if chapeau >= CHAPEAU_RELACHE {
         POV_CENTRE
     } else {
-        u32::from(chapeau - 1) * 4500
+        u32::from(chapeau) * 4500
     }
 }
 
@@ -52,6 +53,7 @@ mod tests {
 
     fn entrees(volant: u16, accel: u8, frein: u8, embr: u8) -> EntreesG27 {
         let mut rapport = [0u8; 10];
+        rapport[0] = 8; // chapeau relâché (nibble bas de l'octet 0)
         let [lo, hi] = volant.to_le_bytes();
         rapport[3] = lo;
         rapport[4] = hi;
@@ -82,25 +84,25 @@ mod tests {
     #[test]
     fn boutons_recopies() {
         let mut rapport = [0u8; 10];
-        rapport[0] = 0b0000_0101; // boutons 1 et 3
+        rapport[0] = 0b0101_0000; // boutons 5 et 7 (nibble haut ; nibble bas = chapeau)
         let position = position_depuis_entrees(&entrees_depuis_rapport(&rapport));
-        assert_eq!(position.buttons & 0b101, 0b101);
+        assert_eq!(position.buttons & 0b0101_0000, 0b0101_0000);
     }
 
     #[test]
     fn chapeau_converti_en_pov() {
         let mut releve = [0u8; 10];
-        releve[2] = 0; // chapeau relâché
+        releve[0] = 8; // chapeau relâché (centré)
         assert_eq!(
             position_depuis_entrees(&entrees_depuis_rapport(&releve)).hats,
             POV_CENTRE
         );
-        releve[2] = 1; // direction 1 → 0 centi-degré
+        releve[0] = 0; // direction haut (N) → 0 centi-degré
         assert_eq!(
             position_depuis_entrees(&entrees_depuis_rapport(&releve)).hats,
             0
         );
-        releve[2] = 3; // direction 3 → 9000 centi-degrés
+        releve[0] = 2; // direction est (E) → 9000 centi-degrés
         assert_eq!(
             position_depuis_entrees(&entrees_depuis_rapport(&releve)).hats,
             9000

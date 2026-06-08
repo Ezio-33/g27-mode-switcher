@@ -23,8 +23,17 @@ const OCTET_ACCELERATEUR: usize = 5;
 const OCTET_FREIN: usize = 6;
 /// Octet de l'embrayage (0–255). **Provisoire.**
 const OCTET_EMBRAYAGE: usize = 7;
-/// Octet contenant le chapeau (nibble bas, 0–8). **Provisoire.**
-const OCTET_CHAPEAU: usize = 2;
+/// Octet contenant le chapeau directionnel : **nibble bas du 1er octet**. Le G27
+/// encode le D-pad sur les 4 bits de poids faible de l'octet 0 — `0`=haut puis
+/// sens horaire jusqu'à `7`=haut-gauche, `8`=relâché (centré). **Validé matériel.**
+const OCTET_CHAPEAU: usize = 0;
+/// Masque conservant les bits de l'octet 0 qui sont de vrais boutons (nibble
+/// haut) ; le nibble bas appartient au chapeau et ne doit pas créer de boutons.
+const MASQUE_BOUTONS_OCTET0: u8 = 0xf0;
+/// Valeur du nibble chapeau lorsque le D-pad est relâché (centré). Les valeurs
+/// `0..CHAPEAU_RELACHE` sont les 8 directions ; `CHAPEAU_RELACHE` (et au-delà)
+/// signifie « centré ».
+pub const CHAPEAU_RELACHE: u8 = 8;
 /// Nombre de boutons du G27 (lus sur 3 octets, boutons 1–24).
 const NB_BOUTONS: u8 = 24;
 
@@ -60,7 +69,8 @@ pub struct EntreesG27 {
     pub frein: u8,
     /// Embrayage (0–255).
     pub embrayage: u8,
-    /// Chapeau directionnel (0 = relâché, 1–8 = directions).
+    /// Chapeau directionnel : `0–7` = 8 directions (`0` = haut, sens horaire),
+    /// `8` = relâché (centré).
     pub chapeau: u8,
     /// État des boutons.
     pub boutons: BoutonsG27,
@@ -78,7 +88,7 @@ pub fn entrees_depuis_rapport(rapport: &[u8]) -> EntreesG27 {
         embrayage: octet(rapport, OCTET_EMBRAYAGE),
         chapeau: octet(rapport, OCTET_CHAPEAU) & 0x0f,
         boutons: BoutonsG27(
-            u32::from(octet(rapport, 0))
+            u32::from(octet(rapport, 0) & MASQUE_BOUTONS_OCTET0)
                 | (u32::from(octet(rapport, 1)) << 8)
                 | (u32::from(octet(rapport, 2)) << 16),
         ),
@@ -102,7 +112,7 @@ mod tests {
     #[test]
     fn decode_axes_et_boutons() {
         let mut rapport = [0u8; 10];
-        rapport[0] = 0b0000_0001; // bouton 1
+        rapport[0] = 0b0001_0000; // bouton 5 (nibble haut ; le nibble bas = chapeau)
         rapport[1] = 0b0001_0000; // bouton 13 (1re)
         rapport[3] = 0x34; // volant bas
         rapport[4] = 0x12; // volant haut → 0x1234
@@ -114,9 +124,26 @@ mod tests {
         assert_eq!(entrees.accelerateur, 200);
         assert_eq!(entrees.frein, 50);
         assert_eq!(entrees.embrayage, 10);
-        assert!(entrees.boutons.est_presse(1));
+        assert!(entrees.boutons.est_presse(5));
         assert!(entrees.boutons.est_presse(13));
         assert!(!entrees.boutons.est_presse(2));
+    }
+
+    #[test]
+    fn chapeau_sur_octet0_jamais_compte_comme_bouton() {
+        // Au repos, le nibble bas de l'octet 0 vaut 8 (chapeau centré) : ce doit
+        // être le chapeau, pas un bouton (sinon le bouton 4 reste « collé »).
+        let repos = entrees_depuis_rapport(&[0x08]);
+        assert_eq!(repos.chapeau, 8);
+        assert_eq!(repos.boutons.masque(), 0);
+        // Croix gauche (W = 6) : ne déclenche aucun bouton (ni 2 ni 3).
+        let gauche = entrees_depuis_rapport(&[0x06]);
+        assert_eq!(gauche.chapeau, 6);
+        assert_eq!(gauche.boutons.masque(), 0);
+        // Un vrai bouton de l'octet 0 (bouton 5, bit 4) reste lu malgré le chapeau.
+        let bouton5 = entrees_depuis_rapport(&[0x18]); // nibble bas 8 (relâché) + bit 4
+        assert_eq!(bouton5.chapeau, 8);
+        assert!(bouton5.boutons.est_presse(5));
     }
 
     #[test]
