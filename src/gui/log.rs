@@ -24,11 +24,11 @@ const MAX_LINES: usize = 250;
 /// Nature d'une ligne de journal (détermine préfixe et couleur).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineKind {
-    /// Information neutre (préfixe « • » or).
+    /// Information neutre (pastille « • » or).
     Info,
-    /// Opération réussie (préfixe « ✓ » vert).
+    /// Opération réussie (pastille « • » verte).
     Success,
-    /// Échec ou avertissement (préfixe « • » rouge).
+    /// Échec ou avertissement (pastille « • » rouge).
     Error,
 }
 
@@ -103,8 +103,10 @@ pub fn render(ui: &mut egui::Ui, buffer: &LogBuffer) {
         .stick_to_bottom(true)
         .show(ui, |ui| {
             for line in buffer.snapshot() {
+                // Pastille « • » colorée selon le niveau (le glyphe ✓ manque dans la
+                // police monospace embarquée → tofu ; la couleur porte le sens).
                 let (prefix, color) = match line.kind {
-                    LineKind::Success => ("\u{2713}", theme::SUCCESS),
+                    LineKind::Success => ("\u{2022}", theme::SUCCESS),
                     LineKind::Info => ("\u{2022}", theme::GOLD),
                     LineKind::Error => ("\u{2022}", theme::LIVE),
                 };

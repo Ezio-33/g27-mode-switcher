@@ -18,9 +18,9 @@ mod mapping;
 pub use mapping::position_depuis_entrees;
 
 use std::io;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -57,6 +57,19 @@ pub struct OptionsPont {
     pub bouton_valider: u8,
     /// Bouton vJoy (1-indexé) déclenchant **Échap** au clavier (`0` = aucun).
     pub bouton_retour: u8,
+}
+
+/// Réglages clavier reconfigurables **à chaud** (le device vJoy étant acquis une seule
+/// fois, on ne peut pas redémarrer le worker ; il relit donc ces options à chaque
+/// rapport via un verrou partagé). Cf. [`Feeder::reconfigurer_clavier`].
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub struct OptionsClavier {
+    /// Traduire le D-pad en flèches.
+    pub chapeau: bool,
+    /// Bouton vJoy → Entrée (`0` = aucun).
+    pub valider: u8,
+    /// Bouton vJoy → Échap (`0` = aucun).
+    pub retour: u8,
 }
 
 /// Pause de la boucle quand l'alimentation est suspendue (axes en pause).
@@ -103,6 +116,8 @@ pub struct Feeder {
     actif: Arc<AtomicBool>,
     /// Demande d'arrêt définitif du worker (le `Drop` la pose puis attend le join).
     arret: Arc<AtomicBool>,
+    /// Réglages clavier relus à chaud par le worker (reconfigurables sans ré-acquérir).
+    clavier: Arc<Mutex<OptionsClavier>>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -127,14 +142,16 @@ impl Feeder {
     pub fn demarrer(id_vjoy: u32, ffb: DemandeFfb) -> Result<Self, ErreurFeeder> {
         let actif = Arc::new(AtomicBool::new(true));
         let arret = Arc::new(AtomicBool::new(false));
+        let clavier = Arc::new(Mutex::new(OptionsClavier::default()));
         let (tx, rx) = mpsc::channel();
 
         let worker = {
             let actif = Arc::clone(&actif);
             let arret = Arc::clone(&arret);
+            let clavier = Arc::clone(&clavier);
             thread::Builder::new()
                 .name("g27-feeder".to_owned())
-                .spawn(move || boucle_feeder(id_vjoy, &actif, &arret, &tx, ffb))
+                .spawn(move || boucle_feeder(id_vjoy, &actif, &arret, &tx, ffb, &clavier))
                 .map_err(ErreurFeeder::Demarrage)?
         };
 
@@ -142,6 +159,7 @@ impl Feeder {
             Ok(Ok(())) => Ok(Self {
                 actif,
                 arret,
+                clavier,
                 worker: Some(worker),
             }),
             // Le worker a déjà relâché le device vJoy (garde) avant de se terminer.
@@ -172,6 +190,14 @@ impl Feeder {
     #[must_use]
     pub fn est_actif(&self) -> bool {
         self.actif.load(Ordering::Relaxed)
+    }
+
+    /// Reconfigure **à chaud** les traductions clavier (D-pad, boutons Entrée/Échap) :
+    /// le worker relit ces réglages au rapport suivant, sans ré-acquérir le device vJoy.
+    pub fn reconfigurer_clavier(&self, options: OptionsClavier) {
+        if let Ok(mut verrou) = self.clavier.lock() {
+            *verrou = options;
+        }
     }
 }
 
@@ -221,6 +247,33 @@ fn greffer_recepteur(
     }
 }
 
+/// Inscrit les réglages clavier initiaux (issus de [`OptionsPont`]) dans le verrou
+/// partagé que le worker relit à chaud.
+fn initialiser_clavier(partage: &Mutex<OptionsClavier>, options: OptionsPont) {
+    if let Ok(mut verrou) = partage.lock() {
+        *verrou = OptionsClavier {
+            chapeau: options.chapeau_clavier,
+            valider: options.bouton_valider,
+            retour: options.bouton_retour,
+        };
+    }
+}
+
+/// Relit les réglages clavier partagés et **recrée** l'injecteur si ils ont changé
+/// depuis `config` (le `Drop` de l'ancien relâche les touches encore enfoncées).
+fn relire_clavier(
+    partage: &Mutex<OptionsClavier>,
+    clavier: &mut Option<ClavierG27>,
+    config: &mut OptionsClavier,
+) {
+    let courante = partage.lock().map_or(*config, |v| *v);
+    if courante != *config {
+        let injecteur = ClavierG27::new(courante.chapeau, courante.valider, courante.retour);
+        *clavier = injecteur.utile().then_some(injecteur);
+        *config = courante;
+    }
+}
+
 /// Corps du worker : acquiert vJoy + ouvre le G27, signale le résultat, puis recopie
 /// tant que l'alimentation est active et qu'aucun arrêt n'est demandé.
 fn boucle_feeder(
@@ -229,6 +282,7 @@ fn boucle_feeder(
     arret: &AtomicBool,
     tx: &Sender<Result<(), ErreurFeeder>>,
     ffb: DemandeFfb,
+    clavier_partage: &Mutex<OptionsClavier>,
 ) {
     // AcquireVJD ici, sur le thread worker (jamais sur le thread appelant/GUI).
     let vjoy = match preparer_vjoy(id) {
@@ -242,6 +296,8 @@ fn boucle_feeder(
     // AVANT `_device` ⇒ droppé APRÈS lui : on relâche d'abord le device
     // (`RelinquishVJD`, qui stoppe les callbacks) PUIS on libère le userdata FFB.
     let (mut entree_pont, _recepteur, options) = greffer_recepteur(ffb, vjoy, id);
+    // Réglages clavier initiaux dans le verrou partagé (la GUI les reconfigure à chaud).
+    initialiser_clavier(clavier_partage, options);
     // Garde RAII : relâche le device vJoy (reset + RelinquishVJD) au `Drop`, sur CE
     // thread, quel que soit le mode de sortie du worker (arrêt, erreur, panique).
     let _device = DeviceVjoyAcquis { vjoy, id };
@@ -286,21 +342,17 @@ fn boucle_feeder(
 
     let debut = std::time::Instant::now();
     let mut modulation = ModulationAutocentrage::new(options.couper_autocentrage);
-    // Traductions clavier (D-pad → flèches, boutons → Entrée/Échap) si demandées. Le
-    // `Drop` (fin de boucle) relâche toute touche encore enfoncée.
-    let mut clavier = {
-        let injecteur = ClavierG27::new(
-            options.chapeau_clavier,
-            options.bouton_valider,
-            options.bouton_retour,
-        );
-        injecteur.utile().then_some(injecteur)
-    };
+    // Traductions clavier (D-pad → flèches, boutons → Entrée/Échap), **relues à chaud**
+    // depuis le verrou partagé : on recrée l'injecteur quand les réglages changent. Le
+    // `Drop` (recréation ou fin de boucle) relâche toute touche encore enfoncée.
+    let mut clavier: Option<ClavierG27> = None;
+    let mut clavier_config = OptionsClavier::default();
     while !arret.load(Ordering::Relaxed) {
         if !actif.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(DELAI_PAUSE_MS));
             continue;
         }
+        relire_clavier(clavier_partage, &mut clavier, &mut clavier_config);
         match lecteur.lire(DELAI_LECTURE_MS) {
             Ok(true) => {
                 let entrees = entrees_depuis_rapport(lecteur.rapport());

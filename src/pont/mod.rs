@@ -14,8 +14,8 @@ pub use detection::{Composant, Prerequis, detecter};
 
 use std::sync::mpsc::Sender;
 
-pub use crate::feeder::OptionsPont;
 use crate::feeder::{self, DemandeFfb, Feeder};
+pub use crate::feeder::{OptionsClavier, OptionsPont};
 use crate::ffb::MessageFfb;
 use crate::hidhide::{self, MasquageGarde};
 
@@ -131,6 +131,31 @@ impl Pont {
         self.feeder.activer();
         if self.masquer && self.masquage.is_none() {
             self.masquage = Some(masquer_g27()?);
+        }
+        Ok(())
+    }
+
+    /// Reconfigure **à chaud** les traductions clavier (D-pad → flèches, boutons →
+    /// Entrée/Échap) sans interrompre le pont ni ré-acquérir le device vJoy.
+    pub fn reconfigurer_clavier(&self, options: OptionsClavier) {
+        self.feeder.reconfigurer_clavier(options);
+    }
+
+    /// Change le **masquage** du G27 à chaud : mémorise la préférence (appliquée aussi
+    /// à la prochaine [`reprendre`](Pont::reprendre)) et masque/démasque immédiatement
+    /// si le pont alimente déjà.
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurPont::Hid`]/[`ErreurPont::Masquage`] si le masquage immédiat échoue.
+    pub fn definir_masquer(&mut self, masquer: bool) -> Result<(), ErreurPont> {
+        self.masquer = masquer;
+        if self.actif() {
+            if masquer && self.masquage.is_none() {
+                self.masquage = Some(masquer_g27()?);
+            } else if !masquer {
+                self.masquage = None; // démasque (Drop de la garde).
+            }
         }
         Ok(())
     }

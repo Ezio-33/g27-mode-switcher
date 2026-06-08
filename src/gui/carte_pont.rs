@@ -81,8 +81,8 @@ impl CartePont {
                 afficher_demarrage(ui);
             } else {
                 match self.pont.as_ref().map(Pont::actif) {
-                    Some(true) => self.afficher_marche(ui, log),
-                    Some(false) => self.afficher_pause(ui, log),
+                    Some(true) => self.afficher_marche(ui, config, log),
+                    Some(false) => self.afficher_pause(ui, config, log),
                     None if self.prerequis.tout_disponible() => self.afficher_pret(ui, config, log),
                     None => afficher_aide(ui, &self.prerequis),
                 }
@@ -123,8 +123,8 @@ impl CartePont {
         }
     }
 
-    /// Pont en marche : état + bouton « Arrêter » (met en pause, garde vJoy acquis).
-    fn afficher_marche(&mut self, ui: &mut egui::Ui, log: &LogBuffer) {
+    /// Pont en marche : état + réglages à chaud + bouton « Arrêter ».
+    fn afficher_marche(&mut self, ui: &mut egui::Ui, config: &mut Config, log: &LogBuffer) {
         let (id, masque) = self
             .pont
             .as_ref()
@@ -143,6 +143,7 @@ impl CartePont {
             .small()
             .color(theme::TEXT_MUTED),
         );
+        controles_options(ui, config, self.pont.as_mut(), log);
         ui.add_space(12.0);
         let bouton =
             egui::Button::new(RichText::new("Arrêter le pont").color(theme::TEXT).strong())
@@ -163,8 +164,8 @@ impl CartePont {
         }
     }
 
-    /// Pont en pause : device vJoy toujours réservé + bouton « Démarrer » (reprend).
-    fn afficher_pause(&mut self, ui: &mut egui::Ui, log: &LogBuffer) {
+    /// Pont en pause : device vJoy réservé + réglages à chaud + bouton « Démarrer ».
+    fn afficher_pause(&mut self, ui: &mut egui::Ui, config: &mut Config, log: &LogBuffer) {
         let id = self.pont.as_ref().map_or(0, Pont::id_vjoy);
         ui.label(
             RichText::new(format!("Pont arrêté — device vJoy #{id} réservé"))
@@ -180,6 +181,7 @@ impl CartePont {
             .small()
             .color(theme::TEXT_DIM),
         );
+        controles_options(ui, config, self.pont.as_mut(), log);
         ui.add_space(12.0);
         if bouton_or(ui, "Démarrer le pont").clicked()
             && let Some(pont) = self.pont.as_mut()
@@ -218,49 +220,7 @@ impl CartePont {
                 }
             });
         });
-        ui.add_space(8.0);
-        let mut masquer = config.pont.masquer_g27_au_demarrage;
-        if ui
-            .checkbox(
-                &mut masquer,
-                RichText::new("Masquer le G27 au jeu")
-                    .size(13.0)
-                    .color(theme::TEXT),
-            )
-            .on_hover_text(
-                "Masqué : le jeu ne voit que la manette vJoy (recommandé en général).\n\
-                 Décoché : le vrai G27 reste visible — nécessaire pour naviguer les menus \
-                 et la map de Forza avec sa croix directionnelle (Forza n'utilise pas le \
-                 D-pad d'un device vJoy générique). À appliquer avant de démarrer le pont.",
-            )
-            .changed()
-        {
-            config.pont.masquer_g27_au_demarrage = masquer;
-        }
-        ui.add_space(6.0);
-        let mut clavier = config.pont.chapeau_vers_clavier;
-        if ui
-            .checkbox(
-                &mut clavier,
-                RichText::new("D-pad → flèches clavier")
-                    .size(13.0)
-                    .color(theme::TEXT),
-            )
-            .on_hover_text(
-                "Traduit la croix directionnelle du G27 en flèches ↑↓←→ du clavier.\n\
-                 Utile quand le G27 est masqué : permet de naviguer les menus et la map \
-                 de Forza (qui n'utilise pas le D-pad d'un device vJoy). Frappes clavier \
-                 globales (fenêtre au premier plan). À appliquer avant de démarrer le pont.",
-            )
-            .changed()
-        {
-            config.pont.chapeau_vers_clavier = clavier;
-        }
-        if config.pont.chapeau_vers_clavier {
-            ui.add_space(4.0);
-            champ_bouton_clavier(ui, "Valider → Entrée", &mut config.pont.bouton_valider);
-            champ_bouton_clavier(ui, "Retour → Échap", &mut config.pont.bouton_retour);
-        }
+        controles_options(ui, config, None, log);
         ui.add_space(12.0);
         if bouton_or(ui, "Démarrer le pont").clicked() {
             let id = config.pont.id_vjoy;
@@ -284,8 +244,8 @@ impl CartePont {
 }
 
 /// Ligne de réglage d'un bouton clavier : libellé + sélecteur du numéro de bouton vJoy
-/// (`0` = aucun). L'utilisateur lit le numéro dans vJoy Monitor / sa configuration.
-fn champ_bouton_clavier(ui: &mut egui::Ui, libelle: &str, numero: &mut u8) {
+/// (`0` = aucun). Renvoie la réponse du sélecteur (pour détecter un changement).
+fn champ_bouton_clavier(ui: &mut egui::Ui, libelle: &str, numero: &mut u8) -> egui::Response {
     ui.horizontal(|ui| {
         ui.label(RichText::new(libelle).size(12.0).color(theme::TEXT_MUTED));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -299,9 +259,82 @@ fn champ_bouton_clavier(ui: &mut egui::Ui, libelle: &str, numero: &mut u8) {
                             format!("#{n}")
                         }
                     }),
-            );
+            )
+        })
+        .inner
+    })
+    .inner
+}
+
+/// Bloc de réglages du pont (masquage + traductions clavier), affiché dans tous les
+/// états. Si `pont` existe, les changements sont **appliqués à chaud** ; sinon ils ne
+/// font que mettre à jour la config (lue au prochain démarrage).
+fn controles_options(
+    ui: &mut egui::Ui,
+    config: &mut Config,
+    mut pont_actif: Option<&mut Pont>,
+    log: &LogBuffer,
+) {
+    ui.add_space(8.0);
+    let mut masquer = config.pont.masquer_g27_au_demarrage;
+    if ui
+        .checkbox(
+            &mut masquer,
+            RichText::new("Masquer le G27 au jeu")
+                .size(13.0)
+                .color(theme::TEXT),
+        )
+        .on_hover_text(
+            "Masqué : le jeu ne voit que la manette vJoy (FFB OK). Décoché : le vrai G27 \
+             reste visible (son D-pad navigue les menus Forza, mais le FFB est alors envoyé \
+             au G27 et perdu). Pour FFB + navigation : masqué + « D-pad → flèches clavier ».",
+        )
+        .changed()
+    {
+        config.pont.masquer_g27_au_demarrage = masquer;
+        if let Some(pont) = pont_actif.as_deref_mut()
+            && let Err(erreur) = pont.definir_masquer(masquer)
+        {
+            log.push(LineKind::Error, format!("Masquage impossible : {erreur}"));
+        }
+    }
+
+    ui.add_space(6.0);
+    let mut clavier_change = false;
+    let mut chapeau = config.pont.chapeau_vers_clavier;
+    if ui
+        .checkbox(
+            &mut chapeau,
+            RichText::new("D-pad → flèches clavier")
+                .size(13.0)
+                .color(theme::TEXT),
+        )
+        .on_hover_text(
+            "Traduit la croix directionnelle en flèches ↑↓←→ du clavier (navigation des \
+             menus/map Forza quand le G27 est masqué). Frappes clavier globales.",
+        )
+        .changed()
+    {
+        config.pont.chapeau_vers_clavier = chapeau;
+        clavier_change = true;
+    }
+    if config.pont.chapeau_vers_clavier {
+        ui.add_space(4.0);
+        if champ_bouton_clavier(ui, "Valider → Entrée", &mut config.pont.bouton_valider).changed()
+        {
+            clavier_change = true;
+        }
+        if champ_bouton_clavier(ui, "Retour → Échap", &mut config.pont.bouton_retour).changed() {
+            clavier_change = true;
+        }
+    }
+    if clavier_change && let Some(pont) = pont_actif {
+        pont.reconfigurer_clavier(pont::OptionsClavier {
+            chapeau: config.pont.chapeau_vers_clavier,
+            valider: config.pont.bouton_valider,
+            retour: config.pont.bouton_retour,
         });
-    });
+    }
 }
 
 /// Bouton d'action doré pleine largeur (style « Démarrer »).
