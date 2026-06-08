@@ -7,6 +7,10 @@ use crate::vjoy::JoystickPositionV2;
 const AXE_MAX: i32 = 32767;
 /// Valeur de chapeau POV « centré » (relâché) pour vJoy.
 const POV_CENTRE: u32 = 0xFFFF_FFFF;
+/// Bouton vJoy (1-indexé) assigné à la marche arrière. Les boutons 1–24 sont déjà
+/// pris par les 24 bits HID du G27 (dont les 6 vitesses, octet 2 bits 0–5 = boutons
+/// 17–22) ; la marche arrière n'a pas de bit propre, on lui réserve le bouton 25.
+const NUMERO_BOUTON_MARCHE_ARRIERE: u8 = 25;
 
 /// Convertit les entrées décodées du G27 en position vJoy.
 ///
@@ -19,10 +23,20 @@ pub fn position_depuis_entrees(entrees: &EntreesG27) -> JoystickPositionV2 {
         axis_y: vers_axe(u32::from(entrees.accelerateur), u32::from(u8::MAX)),
         axis_z: vers_axe(u32::from(entrees.frein), u32::from(u8::MAX)),
         slider: vers_axe(u32::from(entrees.embrayage), u32::from(u8::MAX)),
-        buttons: entrees.boutons.masque().cast_signed(),
+        buttons: boutons_avec_marche_arriere(entrees).cast_signed(),
         hats: chapeau_vers_pov(entrees.chapeau),
         ..JoystickPositionV2::default()
     }
+}
+
+/// Masque des boutons vJoy : les 24 bits HID du G27 + la marche arrière (synthétisée
+/// depuis le levier enfoncé) ajoutée sur [`NUMERO_BOUTON_MARCHE_ARRIERE`].
+fn boutons_avec_marche_arriere(entrees: &EntreesG27) -> u32 {
+    let mut masque = entrees.boutons.masque();
+    if entrees.marche_arriere {
+        masque |= 1 << (NUMERO_BOUTON_MARCHE_ARRIERE - 1);
+    }
+    masque
 }
 
 /// Met à l'échelle `valeur` (dans `0..=max_entree`) sur `0..=AXE_MAX`.
@@ -87,6 +101,25 @@ mod tests {
         rapport[0] = 0b0101_0000; // boutons 5 et 7 (nibble haut ; nibble bas = chapeau)
         let position = position_depuis_entrees(&entrees_depuis_rapport(&rapport));
         assert_eq!(position.buttons & 0b0101_0000, 0b0101_0000);
+    }
+
+    #[test]
+    fn marche_arriere_sur_le_bouton_25() {
+        use crate::entree::{BIT_LEVIER_ENFONCE, OCTET_LEVIER_ETAT};
+        let bit_25 = 1i32 << (super::NUMERO_BOUTON_MARCHE_ARRIERE - 1);
+        // Levier au repos : le bouton 25 n'est pas armé.
+        let mut rapport = [0u8; 11];
+        rapport[OCTET_LEVIER_ETAT] = 0x9c;
+        assert_eq!(
+            position_depuis_entrees(&entrees_depuis_rapport(&rapport)).buttons & bit_25,
+            0
+        );
+        // Levier enfoncé : la marche arrière arme le bouton 25.
+        rapport[OCTET_LEVIER_ETAT] = 0x9c | BIT_LEVIER_ENFONCE;
+        assert_eq!(
+            position_depuis_entrees(&entrees_depuis_rapport(&rapport)).buttons & bit_25,
+            bit_25
+        );
     }
 
     #[test]

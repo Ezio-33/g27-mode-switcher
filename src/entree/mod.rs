@@ -87,6 +87,10 @@ pub struct EntreesG27 {
     pub chapeau: u8,
     /// État des boutons.
     pub boutons: BoutonsG27,
+    /// Marche arrière engagée : le levier de la boîte H est poussé vers le bas.
+    /// Contrairement aux 6 vitesses (chacune un bit de bouton émis à l'engagement),
+    /// la marche arrière n'émet que ce bit « enfoncé » — d'où un traitement à part.
+    pub marche_arriere: bool,
 }
 
 /// Décode un rapport HID brut en [`EntreesG27`].
@@ -105,6 +109,7 @@ pub fn entrees_depuis_rapport(rapport: &[u8]) -> EntreesG27 {
                 | (u32::from(octet(rapport, 1)) << 8)
                 | (u32::from(octet(rapport, 2)) << 16),
         ),
+        marche_arriere: octet(rapport, OCTET_LEVIER_ETAT) & BIT_LEVIER_ENFONCE != 0,
     }
 }
 
@@ -160,11 +165,23 @@ mod tests {
     }
 
     #[test]
+    fn marche_arriere_depuis_le_bit_levier_enfonce() {
+        // Octet 10 au repos (0x9c) : marche arrière relâchée.
+        let mut rapport = [0u8; 11];
+        rapport[super::OCTET_LEVIER_ETAT] = 0x9c;
+        assert!(!entrees_depuis_rapport(&rapport).marche_arriere);
+        // Levier enfoncé (0x9c | 0x40 = 0xdc) : marche arrière engagée.
+        rapport[super::OCTET_LEVIER_ETAT] = 0xdc;
+        assert!(entrees_depuis_rapport(&rapport).marche_arriere);
+    }
+
+    #[test]
     fn rapport_vide_donne_des_zeros() {
         let entrees = entrees_depuis_rapport(&[]);
         assert_eq!(entrees.volant, 0);
         assert_eq!(entrees.accelerateur, 0);
         assert_eq!(entrees.boutons, BoutonsG27::default());
+        assert!(!entrees.marche_arriere);
     }
 
     #[test]
