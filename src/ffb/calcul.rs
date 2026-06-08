@@ -48,31 +48,37 @@ pub fn couple_net(banque: &BanqueEffets, volant: EtatVolant, instant_ms: u64) ->
     borne_i64(somme * i64::from(banque.gain_global()) / GAIN_MAX)
 }
 
-/// Couple issu des **seules forces constantes** (boucle ouverte, sans lecture de la
-/// position du volant). `0` si le device est inactif.
+/// Couple issu des **seuls effets en boucle ouverte** : force constante, périodique
+/// (sinus/carré/triangle/dent de scie) et rampe. `0` si le device est inactif.
 ///
-/// ⚠️ **Sécurité** : les effets conditionnels (ressort/amortisseur/inertie/friction) et
-/// périodiques rebouclent sur la position/vitesse du volant. Appliqués sans validation
-/// matérielle de leur **signe**, ils créent une **oscillation violente** (rétroaction
-/// positive : le volant claque de butée en butée). Tant qu'ils ne sont pas validés un à
-/// un, le pont FFB n'applique que la force constante (validée : cf. `ffb force`).
-/// [`couple_net`] reste la version complète, à réactiver effet par effet une fois le
-/// signe confirmé sur matériel.
+/// ⚠️ **Sécurité** : ces effets ne lisent **pas** la position/vitesse du volant — ils
+/// ne peuvent donc **pas** créer la rétroaction positive qui faisait claquer le volant.
+/// Un périodique au signe inversé ne fait que déphaser une vibration (imperceptible).
+/// On y inclut donc les vibrations (collisions, hors-piste) en plus de la force
+/// constante. Les effets **conditionnels** (ressort/amortisseur/inertie/friction)
+/// rebouclent sur la position : ils restent exclus tant que leur **signe** n'est pas
+/// validé sur matériel — [`couple_net`] (version complète) les ré-inclut.
 #[must_use]
-pub fn couple_constant(banque: &BanqueEffets) -> i32 {
+pub fn couple_boucle_ouverte(banque: &BanqueEffets, instant_ms: u64) -> i32 {
     if !banque.actif() {
         return 0;
     }
     let somme: i64 = banque
         .effets_en_cours()
-        .filter_map(|effet| match &effet.params {
-            ParametresEffet::Constante { magnitude } => {
-                Some(i64::from((*magnitude).clamp(-PLAGE, PLAGE)))
-            }
-            _ => None,
-        })
+        .filter(|effet| est_boucle_ouverte(&effet.params))
+        .map(|effet| i64::from(contribution(effet, EtatVolant::default(), instant_ms)))
         .sum();
     borne_i64(somme * i64::from(banque.gain_global()) / GAIN_MAX)
+}
+
+/// Vrai si l'effet ne lit pas l'état du volant (sûr, sans risque de rétroaction).
+fn est_boucle_ouverte(params: &ParametresEffet) -> bool {
+    matches!(
+        params,
+        ParametresEffet::Constante { .. }
+            | ParametresEffet::Periodique { .. }
+            | ParametresEffet::Rampe { .. }
+    )
 }
 
 /// Contribution d'un seul effet (−PLAGE..PLAGE), avant pondération par le gain global.
@@ -220,7 +226,7 @@ const PLAGE_U32: u32 = PLAGE as u32;
 
 #[cfg(test)]
 mod tests {
-    use super::{EtatVolant, couple_constant, couple_net};
+    use super::{EtatVolant, couple_boucle_ouverte, couple_net};
     use crate::ffb::{BanqueEffets, MessageFfb, OperationEffet, TypeEffet};
 
     /// Crée un effet d'un type donné dans la banque, le paramètre et le démarre.
@@ -369,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn couple_constant_ignore_le_ressort() {
+    fn boucle_ouverte_ignore_le_ressort() {
         let mut banque = BanqueEffets::new();
         // Une force constante ET un ressort en cours.
         effet(
@@ -395,15 +401,36 @@ mod tests {
                 deadband: 0,
             },
         );
-        // Le volant est loin du centre : le ressort contribuerait fortement…
+        // Le volant est loin du centre : le ressort (boucle fermée) contribuerait fort…
         let volant = EtatVolant {
             position: 6000,
             vitesse: 4000,
         };
-        // …mais `couple_constant` ne garde QUE la force constante (sûr, sans rétroaction).
-        assert_eq!(couple_constant(&banque), 3000);
+        // …mais `couple_boucle_ouverte` exclut le ressort (sûr, sans rétroaction).
+        assert_eq!(couple_boucle_ouverte(&banque, 0), 3000);
         // alors que `couple_net` y ajoute le ressort (≠ 3000).
         assert_ne!(couple_net(&banque, volant, 0), 3000);
+    }
+
+    #[test]
+    fn boucle_ouverte_inclut_le_periodique() {
+        let mut banque = BanqueEffets::new();
+        // Un effet périodique (vibration) seul, de période 100 ms, amplitude 4000.
+        effet(
+            &mut banque,
+            1,
+            TypeEffet::Carre,
+            MessageFfb::Periodique {
+                bloc: 1,
+                magnitude: 4000,
+                offset: 0,
+                phase: 0,
+                periode: 100,
+            },
+        );
+        // Première demi-période (carré = +amplitude) : la vibration contribue (≠ 0),
+        // ce qui restitue collisions/hors-piste sans lire la position du volant.
+        assert_ne!(couple_boucle_ouverte(&banque, 0), 0);
     }
 
     #[test]

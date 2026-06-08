@@ -17,7 +17,7 @@ mod message;
 mod reception;
 mod sortie;
 
-pub use calcul::{EtatVolant, couple_constant, couple_net};
+pub use calcul::{EtatVolant, couple_boucle_ouverte, couple_net};
 pub use effets::{BanqueEffets, Effet, ParametresEffet};
 pub use g27::{commande_force_constante, commande_stop_forces};
 pub use message::{ControleDevice, MessageFfb, OperationEffet, TypeEffet};
