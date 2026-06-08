@@ -523,16 +523,30 @@ fn boucle_lecture(
     }
 }
 
+/// Octets purement analogiques et très bruyants : volant little-endian (3, 4) et
+/// position X/Y du levier de la boîte H (8, 9). Validé matériel : le levier H du G27
+/// n'envoie pas des boutons mais deux axes continus qui inondent l'affichage. On les
+/// neutralise dans la clé de déduplication pour ne révéler que les vrais boutons.
+const OCTETS_ANALOGIQUES_BRUYANTS: [usize; 4] = [3, 4, 8, 9];
+
 /// Clé de déduplication « boutons seuls » : ne garde que la portion non bruitée du
-/// rapport. Les axes (à partir de l'octet 3 : volant, pédales, axes analogiques)
-/// sont réduits à leur quartet haut pour absorber le tremblement de ±1, tandis que
-/// les octets de boutons (0–2) gardent leur pleine résolution. Une nouvelle ligne ne
-/// s'imprime donc que lorsqu'un bouton (ou un bit de poids fort) change réellement.
+/// rapport. Les octets de boutons (0–2) gardent leur pleine résolution ; les octets
+/// analogiques bruyants ([`OCTETS_ANALOGIQUES_BRUYANTS`]) sont effacés ; les autres
+/// octets (≥3) sont réduits à leur quartet haut pour absorber le tremblement de ±1.
+/// Une nouvelle ligne ne s'imprime donc que lorsqu'un vrai bouton change.
 fn cle_boutons(rapport: &[u8]) -> Vec<u8> {
     rapport
         .iter()
         .enumerate()
-        .map(|(index, &octet)| if index < 3 { octet } else { octet & 0xF0 })
+        .map(|(index, &octet)| {
+            if index < 3 {
+                octet
+            } else if OCTETS_ANALOGIQUES_BRUYANTS.contains(&index) {
+                0
+            } else {
+                octet & 0xF0
+            }
+        })
         .collect()
 }
 
