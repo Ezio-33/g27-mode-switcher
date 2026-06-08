@@ -65,6 +65,8 @@ enum Command {
     Entrees,
     /// Calibration de la boîte en H : affiche la position X/Y du levier par vitesse.
     Levier,
+    /// Vide le descripteur de rapport HID de chaque interface du G27 natif (debug).
+    Descripteur,
     /// Démarre le pont (feeder vJoy + masquage du G27). Ctrl+C pour arrêter.
     Feeder {
         /// Device vJoy à alimenter (1–16). Défaut : `id_vjoy` de la config.
@@ -227,6 +229,7 @@ fn dispatch(command: Command, config: config::Config, verbose: u8) -> ExitCode {
         Command::Boutons => run_boutons(),
         Command::Entrees => run_entrees(verbose),
         Command::Levier => run_levier(),
+        Command::Descripteur => run_descripteur(),
         Command::Feeder { id, sans_masquage } => run_feeder(id, sans_masquage),
         Command::Hidhide { action } => run_hidhide(action),
         Command::Pont { action } => run_pont(action),
@@ -621,6 +624,56 @@ fn run_entrees(verbose: u8) -> ExitCode {
             format_entrees(rapport, entrees)
         }
     })
+}
+
+/// Vide le descripteur de rapport HID de chaque interface (collection) du G27 natif.
+///
+/// Source de vérité du mapping HID : le descripteur dit, octet par octet, quels bits
+/// sont des boutons, des axes, un chapeau, etc. — et le numéro que Windows leur donne.
+/// Un G27 peut exposer **plusieurs collections** (entrées HID distinctes au même
+/// VID/PID) ; un bouton invisible sur la collection qu'on lit peut vivre sur une autre.
+/// Lecture seule (ouverture non exclusive) ; n'écrit rien au volant.
+fn run_descripteur() -> ExitCode {
+    let api = match hidapi::HidApi::new() {
+        Ok(api) => api,
+        Err(erreur) => {
+            eprintln!("Erreur : accès HID impossible : {erreur}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut interfaces = 0u32;
+    for info in hid::collect_logitech_devices(&api) {
+        if info.mode != hid::G27Mode::Native {
+            continue;
+        }
+        interfaces += 1;
+        println!(
+            "── Interface {} — usage_page {:#06x}, usage {:#06x} ──",
+            info.interface_number, info.usage_page, info.usage
+        );
+        match api.open_path(info.path.as_c_str()) {
+            Ok(device) => {
+                let mut tampon = [0u8; 4096];
+                match device.get_report_descriptor(&mut tampon) {
+                    Ok(taille) => {
+                        let hex: Vec<String> = tampon[..taille]
+                            .iter()
+                            .map(|octet| format!("{octet:02x}"))
+                            .collect();
+                        println!("descripteur ({taille} octets) :\n{}\n", hex.join(" "));
+                    }
+                    Err(erreur) => eprintln!("  descripteur indisponible : {erreur}\n"),
+                }
+            }
+            Err(erreur) => eprintln!("  ouverture impossible : {erreur}\n"),
+        }
+    }
+    if interfaces == 0 {
+        eprintln!("Aucun G27 en mode natif détecté.");
+        return ExitCode::FAILURE;
+    }
+    println!("{interfaces} interface(s) HID listée(s).");
+    ExitCode::SUCCESS
 }
 
 /// Calibration de la boîte en H : relève la position X/Y du levier par vitesse.
