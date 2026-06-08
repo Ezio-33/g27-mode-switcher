@@ -136,6 +136,23 @@ pub fn send_reports(
     Ok(())
 }
 
+/// Écrit un report déjà construit sur un périphérique HID **déjà ouvert**.
+///
+/// Variante bas niveau de [`send_reports`] pour les appelants détenant un handle
+/// persistant (boucle FFB temps réel) : on évite de ré-ouvrir le périphérique à
+/// chaque envoi. Le report est validé puis sérialisé en `[report_id, payload…]`.
+///
+/// # Errors
+///
+/// - [`Error::InvalidReport`] si le report est mal formé ;
+/// - [`Error::Hid`] si l'écriture HID échoue.
+pub fn write_report(device: &hidapi::HidDevice, report: &OutputReport) -> Result<(), Error> {
+    report.validate()?;
+    let buffer = report.to_buffer();
+    device.write(&buffer)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{HID_NO_REPORT_ID, OutputReport};

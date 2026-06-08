@@ -1,0 +1,83 @@
+<div style="background: var(--color-background-secondary); border-radius: var(--border-radius-lg); padding: 1.5rem;">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Inter:wght@400;500&display=swap');
+.gw{max-width:480px;margin:0 auto;background:#0a1014;border:1px solid #1f2a38;border-radius:10px;overflow:hidden;font-family:'Inter',var(--font-sans);color:#f5ecd1}
+.gw-card{background:#0f1620;border:1px solid #1f2a38;border-radius:8px;padding:14px 16px;margin:12px 16px}
+.gw-lbl{font-size:12px;color:#8a96aa;letter-spacing:.4px;text-transform:uppercase;margin-bottom:10px}
+.gw-chip{font-size:12px;color:#b8c2d0;background:#1a2532;border:1px solid #2c3a4c;border-radius:6px;padding:5px 10px}
+.gw-chip.on{color:#0a1014;background:#d4a843;border-color:#d4a843;font-weight:500}
+.gw-foot a{color:#a07f2c;font-size:12px;text-decoration:none}
+</style>
+<div class="gw">
+<div style="background:#0d1620;padding:9px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #1f2a38">
+<span style="font-size:12px;color:#b8c2d0">G27 Mode Switcher</span>
+<span style="color:#8a96aa;font-size:13px"><i class="ti ti-minus" aria-hidden="true"></i>&nbsp;&nbsp;<i class="ti ti-square" aria-hidden="true"></i>&nbsp;&nbsp;<i class="ti ti-x" aria-hidden="true"></i></span>
+</div>
+<div style="padding:22px 16px 16px;text-align:center;border-bottom:1px solid #1f2a38">
+<div style="font-family:'Cinzel',serif;font-size:25px;font-weight:600;color:#d4a843;letter-spacing:3px">G27 MODE SWITCHER</div>
+<div style="margin-top:14px;display:inline-flex;align-items:center;gap:9px;background:#1a2532;border:1px solid #2c3a4c;border-radius:20px;padding:7px 16px">
+<span style="width:9px;height:9px;border-radius:50%;background:#6fd17a"></span>
+<span style="color:#6fd17a;font-size:13px;font-weight:500">Mode natif — 900° — retour de force complet</span>
+</div>
+</div>
+<div class="gw-card">
+<div class="gw-lbl">Mode du volant</div>
+<div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+<span style="font-size:13px;color:#b8c2d0">Volant en mode natif G27 (C29B)</span>
+<button style="background:transparent;color:#b8c2d0;border:1px solid #2c3a4c;border-radius:7px;padding:8px 14px;font-size:12px;font-family:inherit">Revenir en compatibilité</button>
+</div>
+</div>
+<div class="gw-card">
+<div class="gw-lbl">Angle de rotation</div>
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+<div style="flex:1;height:5px;background:#1a2532;border-radius:3px;position:relative">
+<div style="position:absolute;left:0;top:0;height:5px;width:100%;background:#d4a843;border-radius:3px"></div>
+<div style="position:absolute;right:-2px;top:-6px;width:16px;height:16px;border-radius:50%;background:#f0c75e;border:2px solid #0a1014"></div>
+</div>
+<span style="font-family:'Cinzel',serif;font-size:20px;color:#d4a843;min-width:62px;text-align:right">900°</span>
+</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap">
+<span class="gw-chip">F1 · 360°</span>
+<span class="gw-chip">GT · 540°</span>
+<span class="gw-chip">Rallye · 720°</span>
+<span class="gw-chip on">Camion · 900°</span>
+</div>
+</div>
+<div class="gw-card">
+<div class="gw-lbl">Retour de force</div>
+<div style="display:flex;align-items:center;justify-content:space-between">
+<div>
+<div style="font-size:13px;color:#f5ecd1">Autocentrage matériel</div>
+<div style="font-size:11px;color:#8a96aa;margin-top:3px">Désactivé — le jeu gère le retour de force</div>
+</div>
+<div style="width:42px;height:23px;background:#1a2532;border:1px solid #2c3a4c;border-radius:12px;position:relative">
+<div style="position:absolute;left:3px;top:2px;width:17px;height:17px;border-radius:50%;background:#8a96aa"></div>
+</div>
+</div>
+<div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding-top:12px;border-top:1px solid #1f2a38">
+<div>
+<div style="font-size:13px;color:#f5ecd1">Retour de force (vJoy)</div>
+<div style="font-size:11px;color:#6fd17a;margin-top:3px">Actif — vJoy + HidHide détectés</div>
+</div>
+<div style="width:42px;height:23px;background:#d4a843;border-radius:12px;position:relative">
+<div style="position:absolute;right:3px;top:2px;width:17px;height:17px;border-radius:50%;background:#0a1014"></div>
+</div>
+</div>
+</div>
+<div class="gw-card" style="background:#05080b">
+<div class="gw-lbl">Journal</div>
+<div style="font-family:var(--font-mono);font-size:11px;line-height:1.7;color:#8a96aa">
+<div><span style="color:#6fd17a">✓</span> Bascule en mode natif réussie (C29B)</div>
+<div><span style="color:#6fd17a">✓</span> Angle réglé sur 900°</div>
+<div><span style="color:#6fd17a">✓</span> Autocentrage matériel désactivé</div>
+<div><span style="color:#f0c75e">•</span> Pont retour de force vJoy actif</div>
+</div>
+</div>
+<div class="gw-foot" style="display:flex;align-items:center;justify-content:center;gap:18px;padding:14px;border-top:1px solid #1f2a38;background:#0d1620">
+<a href="#"><i class="ti ti-world" aria-hidden="true"></i> Site</a>
+<a href="#"><i class="ti ti-brand-discord" aria-hidden="true"></i> Discord</a>
+<a href="#"><i class="ti ti-heart" aria-hidden="true"></i> Soutenir</a>
+<a href="#"><i class="ti ti-info-circle" aria-hidden="true"></i> À propos</a>
+</div>
+</div>
+</div>

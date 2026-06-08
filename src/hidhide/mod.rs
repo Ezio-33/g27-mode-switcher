@@ -1,0 +1,210 @@
+//! Masquage du G27 réel au jeu via HidHide (IOCTL direct sur `\\.\HidHide`).
+//!
+//! Quand le feeder recopie le G27 vers vJoy, le jeu pourrait voir **à la fois**
+//! le volant réel et le device vJoy (doubles entrées). HidHide cache le volant
+//! réel à toutes les applications **sauf** celles de sa liste blanche : on y
+//! inscrit notre propre exécutable (pour continuer à lire le G27) et on place le
+//! G27 en liste noire, puis on active le masquage.
+//!
+//! La fonctionnalité est **adaptative** : si HidHide n'est pas installé, les
+//! opérations renvoient [`ErreurHidHide::Indisponible`] et le feeder fonctionne
+//! tout de même (le jeu voit alors les deux périphériques).
+//!
+// « HidHide » est un nom de produit, pas un identifiant de code : on évite que
+// clippy réclame des backticks tout au long du module.
+#![allow(clippy::doc_markdown)]
+
+#[cfg(windows)]
+mod controle;
+#[cfg(windows)]
+mod volume;
+
+/// Aide affichée quand HidHide est indisponible (CLI et GUI).
+pub const AIDE_HIDHIDE: &str = "HidHide est introuvable ou inactif. Pour cacher le volant réel au jeu (et éviter les doubles entrées), installez HidHide (x64) depuis https://github.com/nefarius/HidHide/releases.\nSans HidHide, le feeder vJoy fonctionne, mais le jeu peut voir à la fois le G27 et le device vJoy.";
+
+/// Erreur d'une opération HidHide.
+#[derive(Debug, thiserror::Error)]
+pub enum ErreurHidHide {
+    /// HidHide n'est pas installé, ou son pilote est inactif.
+    #[error("HidHide est indisponible (non installé ou pilote inactif)")]
+    Indisponible,
+    /// Aucun G27 en mode natif à masquer.
+    #[error("aucun G27 en mode natif à masquer")]
+    G27Introuvable,
+    /// Le chemin d'instance du G27 n'a pas pu être déterminé.
+    #[error("chemin d'instance du G27 illisible")]
+    InstanceIllisible,
+    /// Échec d'un appel système HidHide.
+    #[error("erreur d'accès à HidHide : {0}")]
+    Io(String),
+}
+
+/// Indique si le pilote HidHide est présent et pilotable.
+#[must_use]
+pub fn disponible() -> bool {
+    #[cfg(windows)]
+    {
+        controle::disponible()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Masque le G27 natif au jeu : liste blanche = notre exe, liste noire = le G27,
+/// puis active le masquage.
+///
+/// # Errors
+///
+/// [`ErreurHidHide::Indisponible`] si HidHide n'est pas pilotable,
+/// [`ErreurHidHide::G27Introuvable`] / [`ErreurHidHide::InstanceIllisible`] si le
+/// volant ne peut être identifié, ou [`ErreurHidHide::Io`] sur échec d'appel.
+pub fn masquer_g27(api: &hidapi::HidApi) -> Result<(), ErreurHidHide> {
+    #[cfg(windows)]
+    {
+        controle::masquer_g27(api)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = api;
+        Err(ErreurHidHide::Indisponible)
+    }
+}
+
+/// Désactive le masquage (le G27 redevient visible de toutes les applications).
+///
+/// # Errors
+///
+/// [`ErreurHidHide::Indisponible`] si HidHide n'est pas pilotable, ou
+/// [`ErreurHidHide::Io`] en cas d'échec d'appel système.
+pub fn demasquer() -> Result<(), ErreurHidHide> {
+    #[cfg(windows)]
+    {
+        controle::demasquer()
+    }
+    #[cfg(not(windows))]
+    {
+        Err(ErreurHidHide::Indisponible)
+    }
+}
+
+/// Active/désactive le masquage **sans toucher aux listes** (test isolé de
+/// `SET_ACTIVE`, pour valider les codes IOCTL).
+///
+/// # Errors
+///
+/// [`ErreurHidHide::Indisponible`] si HidHide n'est pas pilotable, ou
+/// [`ErreurHidHide::Io`] en cas d'échec d'appel système.
+pub fn definir_actif(actif: bool) -> Result<(), ErreurHidHide> {
+    #[cfg(windows)]
+    {
+        controle::definir_actif(actif)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = actif;
+        Err(ErreurHidHide::Indisponible)
+    }
+}
+
+/// Garde RAII : masque le G27 à la création, le démasque au `Drop`.
+///
+/// Garantit le démasquage en cas de panique, d'erreur ou de sortie — **à condition
+/// que le `Drop` s'exécute**. Ne jamais court-circuiter la pile avec
+/// `std::process::exit` ou `abort`, qui sauteraient ce `Drop` et laisseraient le
+/// G27 caché.
+pub struct MasquageGarde {
+    _interne: (),
+}
+
+impl MasquageGarde {
+    /// Active le masquage du G27 ; le démasquage sera garanti au `Drop`.
+    ///
+    /// # Errors
+    ///
+    /// Voir [`masquer_g27`].
+    pub fn activer(api: &hidapi::HidApi) -> Result<Self, ErreurHidHide> {
+        masquer_g27(api)?;
+        Ok(Self { _interne: () })
+    }
+}
+
+impl Drop for MasquageGarde {
+    fn drop(&mut self) {
+        // Exactement le même chemin que la commande `hidhide demasquer` : handle
+        // HidHide frais + SET_ACTIVE(false) + vidage de la liste noire.
+        match demasquer() {
+            Ok(()) => tracing::debug!("HidHide : G27 démasqué (Drop de la garde)"),
+            // Ne JAMAIS rester silencieux sur un échec de démasquage : message
+            // visible (l'erreur inclut le code IOCTL + GetLastError) + log erreur.
+            Err(erreur) => {
+                eprintln!(
+                    "ATTENTION : échec du démasquage du G27 : {erreur}\n  → lancez « g27-mode-switcher hidhide demasquer », ou réinitialisez via le HidHide Configuration Client."
+                );
+                tracing::error!(%erreur, "Échec du démasquage HidHide au Drop de la garde");
+            }
+        }
+    }
+}
+
+/// Déduit le **chemin d'instance** d'un périphérique (`HID\VID_…\…`) à partir de
+/// son **chemin d'interface** hidapi (`\\?\HID#VID_…#…#{guid}`).
+///
+/// Transformation : on retire le préfixe `\\?\` et le suffixe `#{guid}`, on
+/// remplace les `#` par des `\`, et on met en majuscules (convention des
+/// identifiants d'instance Windows, comparés sans tenir compte de la casse).
+#[must_use]
+pub fn instance_depuis_interface(interface: &str) -> Option<String> {
+    let sans_prefixe = interface.strip_prefix(r"\\?\").unwrap_or(interface);
+    let sans_guid = sans_prefixe.split("#{").next().unwrap_or(sans_prefixe);
+    let instance = sans_guid.replace('#', "\\").to_uppercase();
+    (!instance.is_empty()).then_some(instance)
+}
+
+/// Chemins d'instance de **toutes** les interfaces HID du G27 (compat ou natif).
+///
+/// Le volant expose plusieurs collections HID ; pour le masquer entièrement au
+/// jeu, on les met toutes en liste noire. Les doublons sont éliminés.
+#[must_use]
+pub fn instances_g27(api: &hidapi::HidApi) -> Vec<String> {
+    let mut instances = std::collections::BTreeSet::new();
+    for info in api.device_list() {
+        let est_g27 = info.vendor_id() == crate::hid::LOGITECH_VENDOR_ID
+            && matches!(
+                info.product_id(),
+                crate::hid::G27_COMPAT_PRODUCT_ID | crate::hid::G27_NATIVE_PRODUCT_ID
+            );
+        if est_g27
+            && let Ok(interface) = info.path().to_str()
+            && let Some(instance) = instance_depuis_interface(interface)
+        {
+            instances.insert(instance);
+        }
+    }
+    instances.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::instance_depuis_interface;
+
+    #[test]
+    fn deduit_le_chemin_d_instance() {
+        let interface =
+            r"\\?\HID#VID_046D&PID_C29B#7&abcd1234&0&0000#{4d1e55b2-f3b9-4974-a76e-7c7a73e9b1d8}";
+        assert_eq!(
+            instance_depuis_interface(interface).unwrap(),
+            r"HID\VID_046D&PID_C29B\7&ABCD1234&0&0000"
+        );
+    }
+
+    #[test]
+    fn tolere_l_absence_de_prefixe_et_de_guid() {
+        assert_eq!(
+            instance_depuis_interface("hid#vid_046d&pid_c29b#abc").unwrap(),
+            r"HID\VID_046D&PID_C29B\ABC"
+        );
+        assert!(instance_depuis_interface("").is_none());
+    }
+}

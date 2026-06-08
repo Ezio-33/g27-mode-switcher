@@ -1,37 +1,44 @@
-//! Point d'entrée du G27 Mode Switcher.
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Samuel.V (Ezio_33) — https://la-confrerie-des-ombres.vercel.app
 
-mod autocenter;
+// Sous-système « windows » : aucune console noire au lancement de la GUI. En
+// mode CLI (lancement depuis un terminal), on rattache la console parente au
+// démarrage pour que la sortie reste visible.
+#![windows_subsystem = "windows"]
+
+//! Point d'entrée du G27 Mode Switcher (CLI + interface graphique).
+
 mod cli;
-mod hid;
-mod range;
-mod report;
-mod switcher;
+mod gui;
 
 use std::process::ExitCode;
 
 use clap::Parser;
-use tracing_subscriber::EnvFilter;
 
 use crate::cli::Cli;
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
-    init_logging(cli.verbose);
-    cli.run()
+    attach_parent_console();
+    Cli::parse().run()
 }
 
-/// Initialise le logging structuré.
-///
-/// La variable d'environnement `RUST_LOG` reste prioritaire ; sinon le niveau
-/// par défaut dépend du nombre d'occurrences de `--verbose` (`info`, puis
-/// `debug`, puis `trace`).
-fn init_logging(verbose: u8) {
-    let default_level = match verbose {
-        0 => "info",
-        1 => "debug",
-        _ => "trace",
-    };
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+/// Rattache la console du processus parent si le binaire a été lancé depuis un
+/// terminal, afin que la sortie CLI reste visible malgré le sous-système
+/// « windows ». Sans console parente (double-clic), l'appel échoue silencieusement
+/// et la GUI se lance proprement, sans fenêtre console.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn attach_parent_console() {
+    use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+
+    // SAFETY: appel FFI Win32 sans paramètre mémoire ; le code de retour est
+    // volontairement ignoré (un échec signifie simplement « pas de console
+    // parente », cas du double-clic).
+    unsafe {
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
 }
+
+/// Hors Windows, il n'y a pas de console à rattacher.
+#[cfg(not(windows))]
+fn attach_parent_console() {}

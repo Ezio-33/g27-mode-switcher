@@ -1,15 +1,40 @@
 [package]
 name = "g27-mode-switcher"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive"] }
+# Persistance de la configuration utilisateur (Phase 2). `toml` (+ `serde` derive)
+# sérialise/désérialise le fichier de réglages. Le chemin du fichier est résolu à
+# la main via les variables d'environnement (cf. module `config`), sans
+# dépendance tierce — moins de surface, plus auditable.
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+# eframe sans wgpu : on ne garde que le backend glow (OpenGL) pour rester léger
+# et garder un .exe autonome (DLL système uniquement). `default_fonts` fournit
+# les polices de corps par défaut d'egui (Cinzel est embarqué en plus).
+eframe = { version = "0.34", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
 hidapi = "2.6"
+# Chargement dynamique de vJoyInterface.dll (Phase 4) : app adaptative — si vJoy
+# est absent, la DLL ne se charge pas et le FFB reste désactivé proprement.
+libloading = "0.8"
 thiserror = "2.0.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+# Sous Windows uniquement : rattachement de la console parente en mode CLI
+# (le binaire est compilé en sous-système « windows » pour la GUI).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_IO",
+    "Win32_System_Registry",
+] }
 
 [features]
 # Tests d'intégration nécessitant un G27 réellement branché (opt-in).

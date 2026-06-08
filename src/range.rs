@@ -86,10 +86,23 @@ pub fn set_range_report(degrees: u16) -> Result<OutputReport, Error> {
 /// - [`Error::NotNative`] si le G27 est en mode compatibilité ;
 /// - [`Error::Report`] en cas d'échec d'initialisation hidapi ou d'envoi HID.
 pub fn set_range(degrees: u16) -> Result<RangeOutcome, Error> {
-    let report = set_range_report(degrees)?;
     let api = hidapi::HidApi::new().map_err(report::Error::from)?;
-    let info = find_native_g27(&api)?;
-    report::send_reports(&api, &info, std::slice::from_ref(&report), Duration::ZERO)?;
+    set_range_with_api(&api, degrees)
+}
+
+/// Règle l'angle de rotation en réutilisant une instance [`hidapi::HidApi`].
+///
+/// Variante de [`set_range`] pour les appelants possédant déjà un handle hidapi
+/// persistant (session temps réel de la GUI).
+///
+/// # Errors
+///
+/// Identiques à [`set_range`] : [`Error::OutOfRange`], [`Error::NoG27Found`],
+/// [`Error::NotNative`] ou [`Error::Report`].
+pub fn set_range_with_api(api: &hidapi::HidApi, degrees: u16) -> Result<RangeOutcome, Error> {
+    let report = set_range_report(degrees)?;
+    let info = find_native_g27(api)?;
+    report::send_reports(api, &info, std::slice::from_ref(&report), Duration::ZERO)?;
     tracing::info!("angle de rotation réglé à {degrees}°");
     Ok(RangeOutcome {
         device: info,

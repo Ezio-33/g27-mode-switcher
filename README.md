@@ -8,14 +8,21 @@ Bascule un volant **Logitech G27** de son mode dégradé par défaut vers son
 propriétaire** — donc **compatible avec HVCI / Memory Integrity** activé sur
 Windows 11.
 
-> ℹ️ La v0.2.0 débloque les **axes, l'angle et l'autocentrage** du mode natif,
-> mais **pas le retour de force dynamique des jeux** (qui requiert une couche
-> pilote) — voir [Retour de force (FFB)](#retour-de-force-ffb). Le FFB complet
-> est prévu pour la v0.3.0, sans désactiver HVCI.
-
-> **État : `v0.2.0` — nouvelle architecture HID native.**
-> L'outil parle au volant via l'**API HID native** du système (plus aucun
-> pilote à installer, **plus de Zadig**). Il suffit de lancer l'`.exe`.
+> **État : `v0.3.0` — application adaptative « LGS-like », toujours sans pilote.**
+> En plus de la bascule en mode natif (axes, angle, autocentrage de la `v0.2.0`),
+> la `v0.3.0` apporte une **interface graphique**, un **pont vJoy** qui recopie le
+> volant vers une manette virtuelle (en masquant le G27 réel au jeu via HidHide),
+> le **mapping complet des boutons** (boutons façade, **boîte de vitesses en H** +
+> marche arrière, **remappage** des numéros), et un **retour de force** issu du jeu
+> (force constante + **autocentrage modulé par la vitesse** : ferme à l'arrêt, doux
+> en roulant). Tout cela **sans désactiver HVCI**.
+>
+> ⚠️ Le FFB est **partiel et en cours d'affinage** : la force constante (poids de la
+> route) et l'autocentrage fonctionnent ; les vibrations fines (collisions/hors-piste)
+> restent à calibrer. Voir [Retour de force (FFB)](#retour-de-force-ffb).
+>
+> Tout passe par l'**API HID native** du système (aucun pilote à installer, **plus de
+> Zadig**) ; le pont FFB nécessite en plus **vJoy** + **HidHide** (détectés au lancement).
 > Si vous veniez de la `v0.1.0` (qui utilisait WinUSB/Zadig), voir
 > [Migration depuis la v0.1.0](#migration-depuis-la-v010).
 
@@ -29,9 +36,11 @@ Windows 11.
 - [Installation de l'outil](#installation-de-loutil)
 - [Migration depuis la v0.1.0](#migration-depuis-la-v010)
 - [Utilisation](#utilisation)
+- [Configuration](#configuration)
 - [Réglage de l'angle de rotation](#réglage-de-langle-de-rotation)
 - [Autocentrage](#autocentrage)
 - [Retour de force (FFB)](#retour-de-force-ffb)
+- [Pont vJoy (recopie d'entrée + masquage)](#pont-vjoy-recopie-dentrée--masquage)
 - [Mapping natif du G27](#mapping-natif-du-g27)
 - [Dépannage](#dépannage)
 - [Annexe : accès HID sous Linux (règle udev)](#annexe--accès-hid-sous-linux-règle-udev)
@@ -215,6 +224,27 @@ pilote HID natif au volant :
 
 L'outil fonctionne en **user-mode** : aucun droit administrateur n'est requis.
 
+### Interface graphique
+
+**Lancé sans sous-commande**, l'outil ouvre son **interface graphique** (depuis
+la v0.3.0) :
+
+```bash
+# Double-clic sur l'.exe, ou simplement :
+g27-mode-switcher
+```
+
+La fenêtre affiche le mode courant du volant en temps réel et regroupe les
+actions (bascule en mode natif, angle de rotation avec préréglages, autocentrage,
+journal). L'application est **hybride** : lancée depuis un terminal **avec** une
+sous-commande, elle se comporte en outil en ligne de commande classique (la
+sortie s'affiche dans le terminal) ; sans sous-commande, elle bascule en GUI.
+
+> La GUI est encore en cours de finition visuelle (voir la *dette design* dans
+> les notes de développement) ; ses fonctions sont pleinement opérationnelles.
+
+### Ligne de commande
+
 ```bash
 # Aide générale et version
 g27-mode-switcher --help
@@ -254,10 +284,97 @@ La verbosité est aussi pilotable via la variable d'environnement `RUST_LOG`
 > automatiser ce lancement au démarrage de Windows (raccourci dans le dossier
 > *Démarrage*, ou tâche planifiée).
 
+## Configuration
+
+Depuis la **v0.3.0**, l'outil mémorise vos réglages dans un fichier **TOML**.
+La GUI les enregistre automatiquement (angle, autocentrage, taille et position de
+la fenêtre) ; la commande `switch` lit l'angle configuré.
+
+### Emplacement du fichier
+
+| OS | Chemin |
+|----|--------|
+| **Windows** | `%APPDATA%\g27-mode-switcher\config.toml` |
+| **Linux / macOS** | `$XDG_CONFIG_HOME/g27-mode-switcher/config.toml`, sinon `~/.config/g27-mode-switcher/config.toml` |
+
+La commande `g27-mode-switcher config` affiche le chemin exact **et** le contenu
+courant. Le dossier est créé automatiquement à la première écriture. Aucun accès
+disque n'a lieu en dehors de ce dossier.
+
+### Exemple
+
+```toml
+[volant]
+angle_par_defaut = 900            # angle appliqué au switch (40–900)
+appliquer_angle_au_switch = true  # régler l'angle automatiquement au switch
+desactiver_autocentrage_au_switch = false
+
+[fenetre]
+largeur = 480.0
+hauteur = 800.0
+pos_x = 200.0                     # absent au premier lancement
+pos_y = 120.0
+
+[journalisation]
+verbosite = "info"                # info | debug | trace
+
+[pont]
+id_vjoy = 1                       # device vJoy alimenté par le pont (1–16)
+masquer_g27_au_demarrage = true   # masquer le G27 réel au jeu quand le pont tourne
+```
+
+### Clés
+
+| Clé | Type | Défaut | Rôle |
+|-----|------|--------|------|
+| `angle_par_defaut` | entier 40–900 | `900` | Angle appliqué par `switch`. |
+| `appliquer_angle_au_switch` | booléen | `true` | Régler l'angle lors du `switch`. |
+| `desactiver_autocentrage_au_switch` | booléen | `false` | Couper l'autocentrage au `switch`. |
+| `verbosite` | `info`/`debug`/`trace` | `info` | Niveau de logs par défaut. |
+| `largeur` / `hauteur` / `pos_x` / `pos_y` | nombres | 480×800 | Géométrie de la fenêtre (gérée par la GUI). |
+| `id_vjoy` | entier 1–16 | `1` | Device vJoy alimenté par le [pont](#pont-vjoy-recopie-dentrée--masquage). |
+| `masquer_g27_au_demarrage` | booléen | `true` | Masquer le G27 réel au jeu quand le pont tourne. |
+
+### Modifier la configuration en ligne de commande
+
+```bash
+# Afficher le chemin et le contenu courant
+g27-mode-switcher config
+
+# Lire une clé
+g27-mode-switcher config get angle_par_defaut
+
+# Modifier une clé (valeur validée, puis enregistrée)
+g27-mode-switcher config set angle_par_defaut 540
+g27-mode-switcher config set verbosite debug
+g27-mode-switcher config set id_vjoy 2
+g27-mode-switcher config set masquer_g27_au_demarrage false
+```
+
+Les booléens acceptent `true`/`false` (ou `vrai`/`faux`, `oui`/`non`, `1`/`0`).
+Une clé inconnue ou une valeur invalide est **refusée** avec un message clair,
+sans modifier le fichier.
+
+### Comportement si le fichier est absent ou corrompu
+
+Le chargement est **tolérant** : fichier absent, illisible ou TOML invalide →
+l'application démarre sur les **valeurs par défaut** (avec un avertissement au
+journal), sans jamais bloquer. Les valeurs hors bornes sont **corrigées**
+silencieusement (angle ramené dans 40–900, verbosité inconnue → `info`).
+
+### Précédence de la verbosité
+
+Du plus prioritaire au moins prioritaire :
+
+```text
+RUST_LOG  >  -v / -vv  >  verbosite (config)  >  info (défaut)
+```
+
 ## Réglage de l'angle de rotation
 
 En mode natif, le G27 accepte un **angle de rotation** réglable de **40° à
-900°**. La commande `switch` applique **900°** par défaut ; la commande
+900°**. La commande `switch` applique l'angle **configuré** (`angle_par_defaut`,
+900° par défaut — voir [Configuration](#configuration)) ; la commande
 `set-range` permet de choisir une autre valeur, par exemple selon le type de
 course :
 
@@ -312,41 +429,106 @@ g27-mode-switcher switch --disable-autocenter
 
 ## Retour de force (FFB)
 
-> ⚠️ **Limitation importante de la v0.2.0 : pas de FFB dynamique des jeux.**
+> ✅ **Nouveau en v0.3.0 : un retour de force du jeu, partiel, sans LGS ni HVCI désactivé.**
 
 Le G27 communique son retour de force via un **protocole FFB propriétaire
-Logitech** (commandes spécifiques au-dessus du HID). En mode HID natif **sans
-pilote dédié**, voici ce qui fonctionne et ce qui ne fonctionne pas :
+Logitech** (commandes spécifiques au-dessus du HID). Le FFB dynamique nécessite une
+**couche logicielle qui traduit les effets DirectInput du jeu en commandes FFB
+Logitech** — c'est exactement ce que faisait **LGS**. La `v0.3.0` fournit cette
+couche via le [**pont vJoy**](#pont-vjoy-recopie-dentrée--masquage) : le jeu envoie
+ses effets au device virtuel, l'outil les capte et les rejoue sur le G27 réel.
 
-| Fonctionnalité | En HID natif (v0.2.0) |
+| Fonctionnalité | En HID natif (v0.3.0) |
 | --- | --- |
-| Volant, pédales, boutons, boîte H | ✅ Oui |
+| Volant, pédales, boutons, boîte H + marche arrière | ✅ Oui |
 | Angle de rotation (`set-range`) | ✅ Oui |
 | Autocentrage matériel (`set-autocenter`) | ✅ Oui |
-| **FFB dynamique du jeu** (effets de route, perte d'adhérence, trottoirs…) | ❌ **Non** |
+| **Force constante du jeu** (poids de la route, auto-alignement en virage) | ✅ Oui (via le pont) |
+| **Autocentrage modulé par la vitesse** (ferme à l'arrêt, doux en roulant) | ✅ Oui (via le pont) |
+| **Vibrations fines** (collisions, trottoirs, hors-piste) | 🚧 En cours de calibration |
 
-Le FFB dynamique nécessite une **couche logicielle qui traduit les effets
-DirectInput du jeu en commandes FFB Logitech** — c'est exactement ce que faisait
-le pilote **LGS**. Sans cette couche, le firmware ne reçoit jamais les effets et
-le volant reste inerte côté FFB.
+Le pont applique la **force constante** du jeu (validée matériel) et pilote
+l'**autocentrage matériel** à partir du ressort que le jeu module avec la vitesse
+— d'où une résistance ferme à l'arrêt qui s'adoucit en roulant. Les **effets
+périodiques** (vibrations de collision/hors-piste) ne sont pas encore restitués
+proprement et restent à calibrer.
 
-L'**autocentrage matériel** (réglable via `set-autocenter`) fournit une **force
-de centrage basique** — utile pour ne pas avoir un volant mou — mais **ce n'est
-pas du vrai retour de force** : il ignore ce qui se passe dans le jeu.
+> 💡 **Alternative — Logitech Gaming Software (LGS)** : restaure un FFB complet,
+> **mais** installe des composants noyau **incompatibles avec HVCI** (il faut alors
+> désactiver Memory Integrity, ce que ce projet cherche justement à éviter). Le
+> pont vJoy de la `v0.3.0` vise un retour de force **HVCI-safe**.
 
-### En attendant : deux options pour le FFB
+## Pont vJoy (recopie d'entrée + masquage)
 
-1. **Logitech Gaming Software (LGS)** : restaure le FFB complet, **mais** installe
-   des composants noyau **incompatibles avec HVCI** — il faut alors **désactiver
-   Memory Integrity**, ce que ce projet cherche justement à éviter.
-2. **Attendre la v0.3.0** (voir [Feuille de route](#feuille-de-route)).
+Depuis la **v0.3.0**, l'outil fait le **pont** entre le G27 réel et un **device
+vJoy virtuel** : il recopie en continu les axes et boutons du volant vers vJoy,
+tout en **masquant le G27 réel** au jeu (via HidHide) pour éviter le doublon. Sur
+cette base, le pont **capte les effets FFB** que le jeu envoie au device virtuel et
+les **rejoue sur le G27** (force constante + autocentrage modulé — voir
+[Retour de force](#retour-de-force-ffb)).
 
-### Ce que prévoit la v0.3.0
+### Prérequis
 
-Un **FFB complet en option**, sans LGS et **sans désactiver HVCI**, en s'appuyant
-sur **vJoy + HidHide** (pilotes **signés WHQL**, donc compatibles Memory
-Integrity) pour exposer un périphérique virtuel et router les effets FFB vers le
-G27. Objectif : retrouver un retour de force de jeu tout en restant HVCI-safe.
+Deux pilotes **signés WHQL** (donc compatibles HVCI / Memory Integrity), à
+installer une fois (x64) :
+
+- **vJoy** — périphérique de manette virtuel : <https://github.com/jshafer817/vJoy/releases>
+  (ou <https://sourceforge.net/projects/vjoystick/>). Après installation, ouvrez
+  **« Configure vJoy »** et créez au moins le **device #1**.
+- **HidHide** — masque le G27 réel aux jeux : <https://github.com/nefarius/HidHide/releases>
+
+La GUI **détecte automatiquement** ces deux composants et vous indique lesquels
+manquent ; l'état se met à jour tout seul après installation.
+
+> 💡 Pour le **retour de force**, activez **« Enable Effects »** (FFB) sur le device
+> dans *Configure vJoy* : c'est par ce canal que le jeu envoie ses effets, captés
+> puis rejoués sur le G27. (Sans FFB, le pont se limite à la recopie des entrées.)
+
+### Utilisation
+
+**Via la GUI** (recommandé) — carte **« Pont vJoy »** :
+
+- **Démarrer le pont** : choisissez le device vJoy (1–16), puis lancez. Le G27 est
+  masqué au jeu et le device vJoy recopie le volant. Le device vJoy est **acquis une
+  seule fois** pour toute la session.
+- **Arrêter le pont** : coupe la recopie et **démasque** le G27 (le device vJoy reste
+  réservé jusqu'à la fermeture de l'application). **Démarrer** le relance sans
+  ré-acquisition.
+- **Fermer la fenêtre** (croix) : nettoie tout — **G27 démasqué + device vJoy
+  libéré**.
+
+Le pont tourne sur son **propre thread** : l'interface reste fluide, et la bascule
+de mode / l'angle / l'autocentrage continuent de fonctionner **pendant** que le pont
+tourne (cet exécutable reste autorisé à lire le G27 grâce à la liste blanche
+HidHide).
+
+**Via la ligne de commande** :
+
+```bash
+# Démarre le pont (feeder vJoy + masquage). Pour arrêter : FERMEZ la console.
+g27-mode-switcher feeder
+
+# Cibler un autre device vJoy, ou ne pas masquer le G27
+g27-mode-switcher feeder --id 2
+g27-mode-switcher feeder --sans-masquage
+
+# Diagnostiquer les prérequis (vJoy + HidHide)
+g27-mode-switcher pont statut
+```
+
+Le device et le masquage par défaut viennent de la section `[pont]` de la
+[configuration](#configuration) (`id_vjoy`, `masquer_g27_au_demarrage`) ; `--id` et
+`--sans-masquage` sont prioritaires.
+
+### Sûreté : le G27 est toujours rendu visible à l'arrêt
+
+Le masquage est **lié au cycle de vie du pont** : il est garanti que le G27 est
+**démasqué** et le device vJoy **libéré** à l'arrêt (bouton *Arrêter*), à la
+fermeture de la fenêtre, ou à la fermeture de la console (mode CLI) — y compris en
+cas d'erreur. Seul un **kill brutal** du process (Gestionnaire des tâches, coupure
+de courant) peut laisser le G27 masqué. Dans ce cas rare, rouvrez l'outil et
+arrêtez/relancez le pont, ou utilisez le **HidHide Configuration Client** pour vider
+la liste de masquage.
 
 ## Mapping natif du G27
 
@@ -452,11 +634,20 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 10. ✅ `v0.2.0` : passage à l'API HID native (`hidapi`), suppression de Zadig,
     commandes `set-range` et `set-autocenter`, réglage automatique de l'angle à
     900° après bascule (autocentrage matériel laissé actif par défaut).
-11. 🔜 `v0.3.0` : **FFB dynamique complet** en option via **vJoy + HidHide**
-    (signés WHQL, donc **HVCI préservé**, sans LGS) ; **interface graphique** ;
-    **keymapper** (mapping des boutons du G27 — notamment la boîte H — vers des
-    touches clavier) pour les jeux qui ne savent pas remapper la boîte H ;
-    **réactivation paramétrable** de l'autocentrage (`set-autocenter on`).
+11. ✅ `v0.3.0` : outil adaptatif « façon LGS », sans LGS et **HVCI préservé**.
+    - ✅ **Interface graphique** (eframe/egui).
+    - ✅ **Configuration TOML** persistante.
+    - ✅ **Pont vJoy** : recopie d'entrée G27 → device vJoy + **masquage HidHide**
+      du volant réel, avec démasquage garanti à l'arrêt.
+    - ✅ **Mapping complet des entrées** : axes, chapeau (POV), boutons façade,
+      **boîte de vitesses en H** (vitesses + marche arrière) et **remappage** des
+      numéros de boutons — décodage calé sur le **descripteur HID réel** du G27.
+    - ✅ **Retour de force partiel** : **force constante** du jeu rejouée sur le G27
+      + **autocentrage modulé par la vitesse** (ferme à l'arrêt, doux en roulant).
+    - 🚧 **Vibrations fines** (collisions/hors-piste) : à calibrer.
+    - 🔜 **Keymapper** (boîte H → clavier) pour les jeux sans remap.
+    - 🔜 **Démarrage automatique** avec Windows ; réactivation paramétrable de
+      l'autocentrage (`set-autocenter on`).
 
 ## Références
 
@@ -469,9 +660,28 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
   (<https://github.com/Kethen/lg4ff_userspace>) : référence pour l'approche
   user-space.
 
+## Crédits / Auteur
+
+Projet créé et maintenu par **Samuel.V** — *Ezio_33*.
+
+- 🌐 Site : <https://la-confrerie-des-ombres.vercel.app>
+- 💬 Discord : <https://discord.gg/zckGmdg>
+- ❤️ Soutenir : <https://streamelements.com/ezio_33/tip>
+
+Si cet outil vous est utile, un passage sur le site ou le Discord fait toujours
+plaisir. Merci de **conserver l'attribution** (auteur + lien) en cas de
+réutilisation — c'est ce que demande la clause de notice de la licence MIT.
+
 ## Licence
 
-Distribué sous licence **MIT**. Voir le fichier [LICENSE](LICENSE).
+Distribué sous licence **MIT** — voir [`LICENSE`](LICENSE) (version anglaise
+canonique, **seule juridiquement valable**). Une traduction française
+**indicative** est disponible dans [`LICENSE.fr.md`](LICENSE.fr.md).
+
+Les polices embarquées dans l'interface graphique sont distribuées sous **SIL
+Open Font License 1.1** : **Cinzel** (titres) — voir
+[`assets/fonts/OFL.txt`](assets/fonts/OFL.txt) — et **Inter** (corps) — voir
+[`assets/fonts/OFL-Inter.txt`](assets/fonts/OFL-Inter.txt).
 
 S'inspirer du comportement *documenté* du noyau Linux (GPL-2.0) sans en copier
 le code n'entraîne pas de contamination GPL.
