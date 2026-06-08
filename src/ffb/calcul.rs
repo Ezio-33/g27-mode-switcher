@@ -48,6 +48,33 @@ pub fn couple_net(banque: &BanqueEffets, volant: EtatVolant, instant_ms: u64) ->
     borne_i64(somme * i64::from(banque.gain_global()) / GAIN_MAX)
 }
 
+/// Couple issu des **seules forces constantes** (boucle ouverte, sans lecture de la
+/// position du volant). `0` si le device est inactif.
+///
+/// ⚠️ **Sécurité** : les effets conditionnels (ressort/amortisseur/inertie/friction) et
+/// périodiques rebouclent sur la position/vitesse du volant. Appliqués sans validation
+/// matérielle de leur **signe**, ils créent une **oscillation violente** (rétroaction
+/// positive : le volant claque de butée en butée). Tant qu'ils ne sont pas validés un à
+/// un, le pont FFB n'applique que la force constante (validée : cf. `ffb force`).
+/// [`couple_net`] reste la version complète, à réactiver effet par effet une fois le
+/// signe confirmé sur matériel.
+#[must_use]
+pub fn couple_constant(banque: &BanqueEffets) -> i32 {
+    if !banque.actif() {
+        return 0;
+    }
+    let somme: i64 = banque
+        .effets_en_cours()
+        .filter_map(|effet| match &effet.params {
+            ParametresEffet::Constante { magnitude } => {
+                Some(i64::from((*magnitude).clamp(-PLAGE, PLAGE)))
+            }
+            _ => None,
+        })
+        .sum();
+    borne_i64(somme * i64::from(banque.gain_global()) / GAIN_MAX)
+}
+
 /// Contribution d'un seul effet (−PLAGE..PLAGE), avant pondération par le gain global.
 fn contribution(effet: &Effet, volant: EtatVolant, instant_ms: u64) -> i32 {
     match &effet.params {
@@ -193,7 +220,7 @@ const PLAGE_U32: u32 = PLAGE as u32;
 
 #[cfg(test)]
 mod tests {
-    use super::{EtatVolant, couple_net};
+    use super::{EtatVolant, couple_constant, couple_net};
     use crate::ffb::{BanqueEffets, MessageFfb, OperationEffet, TypeEffet};
 
     /// Crée un effet d'un type donné dans la banque, le paramètre et le démarre.
@@ -339,6 +366,44 @@ mod tests {
         );
         banque.appliquer(MessageFfb::Controle(crate::ffb::ControleDevice::Desactiver));
         assert_eq!(couple_net(&banque, au_centre(), 0), 0);
+    }
+
+    #[test]
+    fn couple_constant_ignore_le_ressort() {
+        let mut banque = BanqueEffets::new();
+        // Une force constante ET un ressort en cours.
+        effet(
+            &mut banque,
+            1,
+            TypeEffet::Constante,
+            MessageFfb::Constante {
+                bloc: 1,
+                magnitude: 3000,
+            },
+        );
+        effet(
+            &mut banque,
+            2,
+            TypeEffet::Ressort,
+            MessageFfb::Condition {
+                bloc: 2,
+                centre: 0,
+                coeff_pos: 8000,
+                coeff_neg: 8000,
+                satur_pos: 10000,
+                satur_neg: 10000,
+                deadband: 0,
+            },
+        );
+        // Le volant est loin du centre : le ressort contribuerait fortement…
+        let volant = EtatVolant {
+            position: 6000,
+            vitesse: 4000,
+        };
+        // …mais `couple_constant` ne garde QUE la force constante (sûr, sans rétroaction).
+        assert_eq!(couple_constant(&banque), 3000);
+        // alors que `couple_net` y ajoute le ressort (≠ 3000).
+        assert_ne!(couple_net(&banque, volant, 0), 3000);
     }
 
     #[test]

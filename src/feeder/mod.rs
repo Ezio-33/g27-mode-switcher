@@ -26,9 +26,7 @@ use std::time::Duration;
 
 use crate::autocenter;
 use crate::entree::{ErreurLecture, LecteurG27, entrees_depuis_rapport};
-use crate::ffb::{
-    MessageFfb, PiloteForce, RecepteurFfb, commande_stop_forces, normaliser_position,
-};
+use crate::ffb::{MessageFfb, PiloteForce, RecepteurFfb, commande_stop_forces};
 use crate::report::{self, OutputReport};
 use crate::vjoy::{ErreurVjoy, StatutVjd, Vjoy};
 
@@ -237,7 +235,6 @@ fn boucle_feeder(
     tracing::debug!("Feeder : alimentation des axes active (device vJoy n°{id})");
 
     let debut = std::time::Instant::now();
-    let mut position_volant = 0i32;
     while !arret.load(Ordering::Relaxed) {
         if !actif.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(DELAI_PAUSE_MS));
@@ -246,7 +243,6 @@ fn boucle_feeder(
         match lecteur.lire(DELAI_LECTURE_MS) {
             Ok(true) => {
                 let entrees = entrees_depuis_rapport(lecteur.rapport());
-                position_volant = normaliser_position(entrees.volant);
                 let mut position = position_depuis_entrees(&entrees);
                 let _ = vjoy.mettre_a_jour(id, &mut position);
             }
@@ -260,7 +256,7 @@ fn boucle_feeder(
         // dernière force pour satisfaire le watchdog du G27 (sinon il la relâche).
         if let (Some(pilote), Some(garde)) = (pilote.as_mut(), garde_force.as_ref()) {
             let instant_ms = u64::try_from(debut.elapsed().as_millis()).unwrap_or(u64::MAX);
-            if let Some(commande) = pilote.prochaine_commande(position_volant, instant_ms) {
+            if let Some(commande) = pilote.prochaine_commande(instant_ms) {
                 garde.envoyer(&commande);
             }
         }
