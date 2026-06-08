@@ -218,6 +218,25 @@ impl CartePont {
                 }
             });
         });
+        ui.add_space(8.0);
+        let mut masquer = config.pont.masquer_g27_au_demarrage;
+        if ui
+            .checkbox(
+                &mut masquer,
+                RichText::new("Masquer le G27 au jeu")
+                    .size(13.0)
+                    .color(theme::TEXT),
+            )
+            .on_hover_text(
+                "Masqué : le jeu ne voit que la manette vJoy (recommandé en général).\n\
+                 Décoché : le vrai G27 reste visible — nécessaire pour naviguer les menus \
+                 et la map de Forza avec sa croix directionnelle (Forza n'utilise pas le \
+                 D-pad d'un device vJoy générique). À appliquer avant de démarrer le pont.",
+            )
+            .changed()
+        {
+            config.pont.masquer_g27_au_demarrage = masquer;
+        }
         ui.add_space(12.0);
         if bouton_or(ui, "Démarrer le pont").clicked() {
             let id = config.pont.id_vjoy;
