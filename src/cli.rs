@@ -553,6 +553,18 @@ fn cle_boutons(rapport: &[u8]) -> Vec<u8> {
         .collect()
 }
 
+/// Clé de déduplication « élargie » : n'efface **aucun** octet (contrairement à
+/// [`cle_boutons`]), mais masque le quartet bas des octets ≥3 pour absorber le
+/// tremblement analogique. Révèle un bouton caché dans un octet d'axe (volant ou
+/// levier H), à condition de tenir ces axes immobiles pendant la capture.
+fn cle_boutons_large(rapport: &[u8]) -> Vec<u8> {
+    rapport
+        .iter()
+        .enumerate()
+        .map(|(index, &octet)| if index < 3 { octet } else { octet & 0xF0 })
+        .collect()
+}
+
 /// Lit en direct les boutons du G27 (debug/calibration du keymapper).
 ///
 /// Sert à caler `OCTET_DEBUT_BOUTONS` : affiche le rapport brut, les bits armés
@@ -577,19 +589,29 @@ fn run_boutons() -> ExitCode {
 /// les bits armés du rapport (indices absolus) et les boutons réellement recopiés
 /// vers vJoy. Un bit qui s'arme sans apparaître côté vJoy pointe l'octet/bit manquant.
 fn run_entrees(verbose: u8) -> ExitCode {
-    let en_tete = if verbose > 0 {
-        "Lecture des entrées du G27 natif (Ctrl+C pour quitter) — mode diagnostic.\n\
-         Appuyez un bouton manquant : s'il arme un bit brut sans bouton vJoy, l'octet/bit est localisé."
-    } else {
-        "Lecture des entrées du G27 natif (Ctrl+C pour quitter).\n\
-         Bougez le volant et les pédales pour caler les offsets d'axes."
+    let en_tete = match verbose {
+        0 => {
+            "Lecture des entrées du G27 natif (Ctrl+C pour quitter).\n\
+             Bougez le volant et les pédales pour caler les offsets d'axes."
+        }
+        1 => {
+            "Lecture des entrées du G27 natif (Ctrl+C pour quitter) — diagnostic boutons.\n\
+             Presse un bouton manquant : un nouvel octet:bit apparaît hors des axes analogiques."
+        }
+        _ => {
+            "Lecture des entrées du G27 natif (Ctrl+C pour quitter) — diagnostic ÉLARGI.\n\
+             Tiens le volant ET le levier IMMOBILES (point mort), puis presse le bouton cherché :\n\
+             rien n'est effacé (seul le tremblement est filtré), même un bit dans un octet d'axe ressort."
+        }
     };
-    // En mode diagnostic, on déduplique sur les boutons seuls (axes ignorés) pour
-    // que l'affichage ne défile pas : presser un bouton produit alors UNE ligne.
-    let cle: fn(&[u8]) -> Vec<u8> = if verbose > 0 {
-        cle_boutons
-    } else {
-        <[u8]>::to_vec
+    // Choix de la clé de déduplication selon le niveau :
+    //   -v  : axes analogiques bruyants effacés (bouton clairement hors des axes) ;
+    //   -vv : rien d'effacé, seul le quartet bas (tremblement) est masqué — révèle un
+    //         bouton caché dans un octet d'axe, à condition de tenir les axes immobiles.
+    let cle: fn(&[u8]) -> Vec<u8> = match verbose {
+        0 => <[u8]>::to_vec,
+        1 => cle_boutons,
+        _ => cle_boutons_large,
     };
     boucle_lecture(en_tete, cle, move |rapport| {
         let entrees = entree::entrees_depuis_rapport(rapport);
