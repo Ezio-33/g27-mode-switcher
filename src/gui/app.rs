@@ -604,7 +604,7 @@ impl eframe::App for App {
 
                 // Cartes défilables : si la fenêtre est trop petite, une barre de
                 // défilement apparaît au lieu de couper le contenu.
-                egui::ScrollArea::vertical()
+                let sortie = egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         egui::Frame::NONE
@@ -632,11 +632,44 @@ impl eframe::App for App {
                                 }
                             });
                     });
+                indicateurs_defilement(ui, &sortie);
             });
 
         self.about_window(ui.ctx());
         self.conditions_window(ui.ctx());
     }
+}
+
+/// Dessine des **chevrons de défilement** discrets (▲ en haut / ▼ en bas) aux bords de la
+/// zone défilable, **uniquement** s'il reste du contenu dans cette direction.
+fn indicateurs_defilement<R>(ui: &egui::Ui, sortie: &egui::scroll_area::ScrollAreaOutput<R>) {
+    let vue = sortie.inner_rect;
+    let decalage = sortie.state.offset.y;
+    let painter = ui.painter();
+    if decalage > 1.0 {
+        chevron_defilement(painter, egui::pos2(vue.center().x, vue.top() + 12.0), false);
+    }
+    if decalage + vue.height() < sortie.content_size.y - 1.0 {
+        chevron_defilement(
+            painter,
+            egui::pos2(vue.center().x, vue.bottom() - 12.0),
+            true,
+        );
+    }
+}
+
+/// Petit chevron doré sur un halo sombre (visible sur tout fond). `vers_le_bas` → ▼, sinon ▲.
+fn chevron_defilement(painter: &egui::Painter, centre: egui::Pos2, vers_le_bas: bool) {
+    const DEMI_L: f32 = 6.0;
+    const DEMI_H: f32 = 4.0;
+    painter.circle_filled(centre, 10.0, egui::Color32::from_black_alpha(150));
+    let dir = if vers_le_bas { 1.0 } else { -1.0 };
+    let gauche = egui::pos2(centre.x - DEMI_L, centre.y - dir * DEMI_H);
+    let pointe = egui::pos2(centre.x, centre.y + dir * DEMI_H);
+    let droite = egui::pos2(centre.x + DEMI_L, centre.y - dir * DEMI_H);
+    let crayon = egui::Stroke::new(2.0, theme::GOLD);
+    painter.line_segment([gauche, pointe], crayon);
+    painter.line_segment([pointe, droite], crayon);
 }
 
 /// Pastille ronde pleine dessinée au painter (le glyphe « ● » manque aux polices).
