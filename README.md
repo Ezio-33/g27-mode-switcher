@@ -8,23 +8,29 @@ Bascule un volant **Logitech G27** de son mode dégradé par défaut vers son
 propriétaire** — donc **compatible avec HVCI / Memory Integrity** activé sur
 Windows 11.
 
-> **État : `v0.3.0` — application adaptative « LGS-like », toujours sans pilote.**
-> En plus de la bascule en mode natif (axes, angle, autocentrage de la `v0.2.0`),
-> la `v0.3.0` apporte une **interface graphique**, un **pont vJoy** qui recopie le
-> volant vers une manette virtuelle (en masquant le G27 réel au jeu via HidHide),
-> le **mapping complet des boutons** (boutons façade, **boîte de vitesses en H** +
-> marche arrière, **remappage** des numéros), et un **retour de force** issu du jeu
-> (force constante + **autocentrage modulé par la vitesse** : ferme à l'arrêt, doux
-> en roulant). Tout cela **sans désactiver HVCI**.
+> **État : `v1.0.0` — application adaptative « LGS-like » complète, toujours sans pilote.**
+> Au-delà de la bascule en mode natif (axes, angle, autocentrage), la `v1.0.0` offre
+> **deux modes de jeu** sélectionnables dans un menu **« Jeux »** :
 >
-> ⚠️ Le FFB est **partiel et en cours d'affinage** : la force constante (poids de la
-> route) et l'autocentrage fonctionnent ; les vibrations fines (collisions/hors-piste)
-> restent à calibrer. Voir [Retour de force (FFB)](#retour-de-force-ffb).
+> - **Mode général** — un **pont vJoy** qui recopie le volant vers une manette virtuelle
+>   (en masquant le G27 réel au jeu via HidHide) et **rejoue le retour de force** du jeu
+>   (force constante + **autocentrage modulé par la vitesse**). Compatible **tous jeux**,
+>   nécessite vJoy + HidHide.
+> - **Mode Forza** *(nouveau)* — **sans vJoy, sans HidHide, sans masquage** : le G27 reste
+>   reconnu nativement (**navigation menus *et* map intactes**) et le retour de force est
+>   **synthétisé depuis la télémétrie « Data Out »** intégrée au jeu — **aucun logiciel en
+>   plus**. Volant **lourd à l'arrêt** qui **s'allège progressivement** avec la vitesse,
+>   plus la force de virage déduite de la dérive des pneus.
+>
+> S'y ajoutent une **interface graphique**, le **mapping complet des boutons** (façade,
+> **boîte en H** + marche arrière) avec une **fenêtre de remappage interactive** (clique
+> une case, appuie sur le bouton du volant), et la **navigation clavier/souris** du D-pad
+> pour les jeux qui ignorent les manettes virtuelles. Tout cela **sans désactiver HVCI**.
 >
 > Tout passe par l'**API HID native** du système (aucun pilote à installer, **plus de
-> Zadig**) ; le pont FFB nécessite en plus **vJoy** + **HidHide** (détectés au lancement).
-> Si vous veniez de la `v0.1.0` (qui utilisait WinUSB/Zadig), voir
-> [Migration depuis la v0.1.0](#migration-depuis-la-v010).
+> Zadig**). Le **mode général** nécessite **vJoy** + **HidHide** (détectés au lancement) ;
+> le **mode Forza** ne nécessite **rien d'autre que le jeu**. Si vous veniez de la `v0.1.0`
+> (qui utilisait WinUSB/Zadig), voir [Migration depuis la v0.1.0](#migration-depuis-la-v010).
 
 ## Sommaire
 
