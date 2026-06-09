@@ -8,23 +8,28 @@ Bascule un volant **Logitech G27** de son mode dégradé par défaut vers son
 propriétaire** — donc **compatible avec HVCI / Memory Integrity** activé sur
 Windows 11.
 
-> **État : `v1.0.0` — application adaptative « LGS-like » complète, toujours sans pilote.**
-> Au-delà de la bascule en mode natif (axes, angle, autocentrage), la `v1.0.0` offre
+> **État : `v1.1.0` — application adaptative « LGS-like » complète, toujours sans pilote.**
+> Au-delà de la bascule en mode natif (axes, angle, autocentrage), la `v1.1.0` offre
 > **deux modes de jeu** sélectionnables dans un menu **« Jeux »** :
 >
-> - **Mode général** — un **pont vJoy** qui recopie le volant vers une manette virtuelle
->   (en masquant le G27 réel au jeu via HidHide) et **rejoue le retour de force** du jeu
->   (force constante + **autocentrage modulé par la vitesse**). Compatible **tous jeux**,
->   nécessite vJoy + HidHide.
-> - **Mode Forza** *(nouveau)* — **sans vJoy, sans HidHide, sans masquage** : le G27 reste
->   reconnu nativement (**navigation menus *et* map intactes**) et le retour de force est
->   **synthétisé depuis la télémétrie « Data Out »** intégrée au jeu — **aucun logiciel en
->   plus**. Volant **lourd à l'arrêt** qui **s'allège progressivement** avec la vitesse,
->   plus la force de virage déduite de la dérive des pneus.
+> - **Mode général** — c'est le mode « **passe-partout** » : l'outil crée une **manette
+>   virtuelle** (via vJoy), y recopie en continu tout ce que fait votre volant (axes,
+>   boutons, pédales), **cache le vrai G27 au jeu** (via HidHide) pour éviter qu'il
+>   apparaisse en double, puis **récupère le retour de force que le jeu envoie à la manette
+>   virtuelle et le rejoue sur le G27** (force constante + **autocentrage modulé par la
+>   vitesse**). Avantage : ça marche avec **n'importe quel jeu**. Coût : il faut installer
+>   **vJoy** + **HidHide** (deux petits pilotes signés, une fois).
+> - **Mode Forza** *(nouveau)* — **sans vJoy, sans HidHide, sans rien cacher** : le G27 reste
+>   reconnu nativement par le jeu (**navigation menus *et* carte intactes**) et le retour de
+>   force est **calculé à partir de la télémétrie « Data Out »** que Forza diffuse lui-même
+>   — **aucun logiciel en plus**. Volant **lourd à l'arrêt** qui **s'allège** avec la vitesse,
+>   force de virage déduite de la dérive des pneus, **vibrations** de la route et **secousses**
+>   aux sauts/atterrissages.
 >
-> S'y ajoutent une **interface graphique**, le **mapping complet des boutons** (façade,
-> **boîte en H** + marche arrière) avec une **fenêtre de remappage interactive** (clique
-> une case, appuie sur le bouton du volant), et la **navigation clavier/souris** du D-pad
+> S'y ajoutent une **interface graphique** (accessible : police lisible, contenu défilable),
+> le **mapping complet des boutons** (façade, **boîte en H** + marche arrière) avec une
+> **fenêtre de remappage interactive** (clique une case, appuie sur le bouton du volant), et
+> la **navigation clavier/souris** depuis le **D-pad** (la *croix directionnelle* du volant)
 > pour les jeux qui ignorent les manettes virtuelles. Tout cela **sans désactiver HVCI**.
 >
 > Tout passe par l'**API HID native** du système (aucun pilote à installer, **plus de
@@ -568,8 +573,16 @@ lui fournit aucun FFB.
 Le **mode Forza** lève ce dilemme : on **ne masque pas** le G27 (navigation native
 conservée) et l'application **synthétise** le retour de force à partir de la
 **télémétrie « Data Out »** que Forza diffuse lui-même (fonction intégrée au jeu,
-**aucun logiciel à installer**). La force est calculée depuis la physique (angle de
-dérive des pneus, vitesse) et écrite au volant par commandes `lg4ff` brutes.
+**aucun logiciel à installer**). La force est calculée depuis la physique et écrite au
+volant par commandes `lg4ff` brutes. Le modèle combine quatre effets :
+
+- **force de virage** (couple d'auto-alignement ∝ dérive des pneus avant) ;
+- **poids** de direction **lourd à l'arrêt** (friction de parking) qui **s'allège** avec
+  la vitesse, comme une vraie direction ;
+- **vibrations de la route** (déduites de la variation du débattement de suspension :
+  silence sur le lisse, tremblement en tout-terrain) ;
+- **secousses** aux **sauts/atterrissages** (compression brutale de la suspension), et
+  **allègement** du volant quand le train avant décolle.
 
 | | Mode général (vJoy) | Mode Forza (télémétrie) |
 | --- | --- | --- |
