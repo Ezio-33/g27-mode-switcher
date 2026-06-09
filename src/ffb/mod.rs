@@ -19,7 +19,7 @@ mod reception;
 mod sortie;
 
 pub use autocentrage::ModulateurAutocentrage;
-pub use calcul::{EtatVolant, coeff_ressort, couple_constant, couple_net};
+pub use calcul::{EtatVolant, coeff_ressort, couple_constant, couple_net, couple_sans_retroaction};
 pub use effets::{BanqueEffets, Effet, ParametresEffet};
 pub use g27::{commande_force_constante, commande_stop_forces};
 pub use message::{ControleDevice, MessageFfb, OperationEffet, TypeEffet};

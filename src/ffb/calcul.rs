@@ -75,6 +75,31 @@ pub fn couple_constant(banque: &BanqueEffets) -> i32 {
     borne_i64(somme * i64::from(banque.gain_global()) / GAIN_MAX)
 }
 
+/// Couple **sans rétroaction** appliqué par le pont vJoy : **forces constantes** +
+/// **effets périodiques** (sinus/carré/triangle/dent de scie) + rampes. Tous sont
+/// *purement temporels* (open-loop) — donc **sûrs**, exactement comme les secousses
+/// synthétisées du mode Forza : ils ne rebouclent pas sur la position du volant et ne
+/// peuvent pas créer d'oscillation violente. Restitue ainsi les **vibrations** que le jeu
+/// envoie (trottoirs, collisions, rumble, hors-piste), absentes de [`couple_constant`].
+///
+/// ⚠️ Exclut **volontairement** les effets **conditionnels** (ressort/amortisseur/friction/
+/// inertie) : eux rebouclent sur la position/vitesse et claqueraient si leur signe n'est
+/// pas validé matériel (cf. [`couple_net`]). Le ressort du jeu pilote séparément
+/// l'autocentrage matériel (cf. [`coeff_ressort`]).
+#[must_use]
+pub fn couple_sans_retroaction(banque: &BanqueEffets, instant_ms: u64) -> i32 {
+    if !banque.actif() {
+        return 0;
+    }
+    let somme: i64 = banque
+        .effets_en_cours()
+        .filter(|effet| !matches!(effet.params, ParametresEffet::Condition { .. }))
+        // Les effets restants n'utilisent pas la position du volant → `default()` suffit.
+        .map(|effet| i64::from(contribution(effet, EtatVolant::default(), instant_ms)))
+        .sum();
+    borne_i64(somme * i64::from(banque.gain_global()) / GAIN_MAX)
+}
+
 /// Coefficient du **ressort** que le jeu envoie (max des effets `Ressort` en cours,
 /// `0` si aucun ou device inactif). Forza module ce coefficient avec la vitesse
 /// (fort à l'arrêt, doux en roulant) : on s'en sert pour piloter l'autocentrage
@@ -244,7 +269,7 @@ const PLAGE_U32: u32 = PLAGE as u32;
 
 #[cfg(test)]
 mod tests {
-    use super::{EtatVolant, couple_constant, couple_net};
+    use super::{EtatVolant, couple_constant, couple_net, couple_sans_retroaction};
     use crate::ffb::{BanqueEffets, MessageFfb, OperationEffet, TypeEffet};
 
     /// Crée un effet d'un type donné dans la banque, le paramètre et le démarre.
@@ -428,6 +453,56 @@ mod tests {
         assert_eq!(couple_constant(&banque), 3000);
         // alors que `couple_net` y ajoute le ressort (≠ 3000).
         assert_ne!(couple_net(&banque, volant, 0), 3000);
+    }
+
+    #[test]
+    fn sans_retroaction_inclut_le_periodique_mais_pas_le_ressort() {
+        let mut banque = BanqueEffets::new();
+        // Force constante + effet périodique (sinus) + ressort (conditionnel).
+        effet(
+            &mut banque,
+            1,
+            TypeEffet::Constante,
+            MessageFfb::Constante {
+                bloc: 1,
+                magnitude: 1000,
+            },
+        );
+        effet(
+            &mut banque,
+            2,
+            TypeEffet::Sinus,
+            MessageFfb::Periodique {
+                bloc: 2,
+                magnitude: 4000,
+                offset: 0,
+                phase: 9000, // quart de cycle → sinus = +1 à t=0
+                periode: 100,
+            },
+        );
+        effet(
+            &mut banque,
+            3,
+            TypeEffet::Ressort,
+            MessageFfb::Condition {
+                bloc: 3,
+                centre: 0,
+                coeff_pos: 8000,
+                coeff_neg: 8000,
+                satur_pos: 10000,
+                satur_neg: 10000,
+                deadband: 0,
+            },
+        );
+        // À t=0 : constante (1000) + périodique (+4000) ; le ressort est **exclu**
+        // (open-loop seulement), même volant loin du centre.
+        assert_eq!(couple_sans_retroaction(&banque, 0), 5000);
+        // `couple_net` y ajouterait le ressort → valeur différente.
+        let volant = EtatVolant {
+            position: 6000,
+            vitesse: 0,
+        };
+        assert_ne!(couple_net(&banque, volant, 0), 5000);
     }
 
     #[test]

@@ -6,10 +6,12 @@
 //! donc testable. L'écriture HID, la coupure de l'autocentrage et le `stop` garanti
 //! sont du ressort de l'appelant (le worker du feeder), seul détenteur du handle G27.
 //!
-//! ⚠️ **Sécurité** : on n'applique que la **force constante** (boucle ouverte, validée
-//! matériel via `ffb force`). Les effets à boucle fermée (ressort/amortisseur/périodique)
-//! provoquent une oscillation violente tant que leur signe n'est pas validé : ils sont
-//! écartés au calcul (cf. [`crate::ffb::couple_constant`]).
+//! ⚠️ **Sécurité** : on applique les effets **sans rétroaction** — force **constante** +
+//! effets **périodiques** (vibrations : trottoirs/collisions/rumble), tous *open-loop* donc
+//! sûrs (cf. [`crate::ffb::couple_sans_retroaction`]). Les effets **conditionnels** à boucle
+//! fermée (ressort/amortisseur/friction/inertie) restent **écartés** : ils provoqueraient une
+//! oscillation violente tant que leur signe n'est pas validé matériel. Le ressort du jeu
+//! pilote l'**autocentrage matériel** séparément.
 
 use std::sync::mpsc::Receiver;
 
@@ -17,7 +19,7 @@ use crate::report::OutputReport;
 
 use super::{
     BanqueEffets, MessageFfb, ModulateurAutocentrage, coeff_ressort, commande_force_constante,
-    couple_constant,
+    couple_sans_retroaction,
 };
 
 /// Période minimale entre deux envois de force (ms) ≈ 100 Hz. Le G27 a un watchdog
@@ -66,7 +68,10 @@ impl PiloteForce {
             return None;
         }
         self.prochain_envoi_ms = instant_ms + PERIODE_ENVOI_MS;
-        Some(commande_force_constante(couple_constant(&self.banque)))
+        Some(commande_force_constante(couple_sans_retroaction(
+            &self.banque,
+            instant_ms,
+        )))
     }
 
     /// Amplitude d'autocentrage matériel souhaitée (0..`0xFFFF`), déduite du ressort
