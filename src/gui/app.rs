@@ -358,24 +358,19 @@ impl App {
         let mut about_clicked = false;
         let mut conditions_clicked = false;
         centered_row(ui, "liens_pied", |ui| {
-            ui.spacing_mut().item_spacing.x = 12.0;
+            ui.spacing_mut().item_spacing.x = 8.0;
             footer_link(ui, "Site", URL_SITE);
             footer_sep(ui);
             footer_link(ui, "Discord", URL_DISCORD);
             footer_sep(ui);
             footer_link(ui, "Soutenir", URL_TIP);
             footer_sep(ui);
-            let about =
-                egui::Button::new(RichText::new("À propos").small().color(theme::GOLD_DARK))
-                    .frame(false);
-            if ui.add(about).clicked() {
+            // Liens (pas des boutons) pour avoir l'effet de survol identique aux autres.
+            if ui.link(footer_texte("À propos")).clicked() {
                 about_clicked = true;
             }
             footer_sep(ui);
-            let conditions =
-                egui::Button::new(RichText::new("Conditions").small().color(theme::GOLD_DARK))
-                    .frame(false);
-            if ui.add(conditions).clicked() {
+            if ui.link(footer_texte("Conditions")).clicked() {
                 conditions_clicked = true;
             }
         });
@@ -781,14 +776,29 @@ fn conditions_paragraphe(ui: &mut egui::Ui, titre: &str, texte: &str) {
     ui.label(RichText::new(texte).color(theme::TEXT));
 }
 
-/// Lien de pied de page discret (or atténué).
-fn footer_link(ui: &mut egui::Ui, label: &str, url: &str) {
-    ui.hyperlink_to(RichText::new(label).small().color(theme::GOLD_DARK), url);
+/// Taille de police du pied de page (relevée pour la lisibilité).
+const FOOTER_SIZE: f32 = 15.0;
+
+/// Style commun du texte des liens de pied de page (taille relevée, gras, or atténué).
+fn footer_texte(label: &str) -> RichText {
+    RichText::new(label)
+        .size(FOOTER_SIZE)
+        .strong()
+        .color(theme::GOLD_DARK)
 }
 
-/// Séparateur discret entre deux liens.
+/// Lien de pied de page (or atténué, gras, avec effet de survol).
+fn footer_link(ui: &mut egui::Ui, label: &str, url: &str) {
+    ui.hyperlink_to(footer_texte(label), url);
+}
+
+/// Séparateur discret entre deux liens (même taille, non gras).
 fn footer_sep(ui: &mut egui::Ui) {
-    ui.label(RichText::new("\u{b7}").small().color(theme::TEXT_DIM));
+    ui.label(
+        RichText::new("\u{b7}")
+            .size(FOOTER_SIZE)
+            .color(theme::TEXT_DIM),
+    );
 }
 
 /// Libellé court du mode de jeu (menu + indicateur).
