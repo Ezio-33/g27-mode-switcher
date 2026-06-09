@@ -28,9 +28,10 @@ const POIDS_ARRET: f32 = 48_000.0;
 /// Poids d'autocentrage matériel **en roulant** (sur `0xFFFF`) : les pneus roulent, la
 /// friction chute, le volant **s'allège** nettement.
 const POIDS_ROULANT: f32 = 9_000.0;
-/// Vitesse (m/s ≈ 43 km/h) au-delà de laquelle l'allègement est complet : le volant passe
-/// **progressivement** de lourd (arrêt) à léger (en roulant), comme une vraie direction.
-const VITESSE_ALLEGEMENT_M_S: f32 = 12.0;
+/// Vitesse (m/s ≈ 65 km/h) où l'allègement atteint son plateau léger : en deçà, le volant
+/// reste **lourd à bas régime** et s'allège en **cosinus** (très progressif), comme une
+/// vraie direction. Au-delà, il reste au poids léger (`POIDS_ROULANT`).
+const VITESSE_ALLEGEMENT_M_S: f32 = 18.0;
 
 /// Réglages du retour de force Forza, ajustables à chaud.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,8 +92,11 @@ pub fn autocentre_depuis_vitesse(t: &Telemetrie, reglages: &ReglagesForza) -> u1
         return 0;
     }
     let facteur = (t.vitesse_m_s / VITESSE_ALLEGEMENT_M_S).clamp(0.0, 1.0);
+    // Allègement en cosinus : pente nulle à l'arrêt (reste lourd à bas régime) puis
+    // descente douce jusqu'au plateau léger — bien plus progressif qu'une rampe linéaire.
+    let poids = (facteur * core::f32::consts::FRAC_PI_2).cos();
     let gain = f32::from(reglages.gain) / 100.0;
-    let magnitude = (POIDS_ARRET - facteur * (POIDS_ARRET - POIDS_ROULANT)) * gain;
+    let magnitude = (POIDS_ROULANT + poids * (POIDS_ARRET - POIDS_ROULANT)) * gain;
     borne_u16(magnitude)
 }
 
