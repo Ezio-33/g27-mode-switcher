@@ -22,30 +22,58 @@ const NUMERO_BOUTON_CHAPEAU_DROITE: u8 = 26;
 const NUMERO_BOUTON_CHAPEAU_BAS: u8 = 27;
 const NUMERO_BOUTON_CHAPEAU_GAUCHE: u8 = 28;
 
-/// Remappage des boutons HID du G27 vers les numéros de boutons vJoy souhaités
-/// (préférence utilisateur). Indexé par le numéro de bouton **G27** (1–23) ; la valeur
-/// est le numéro de bouton **vJoy** émis. C'est une permutation des boutons 1–22 ; le
-/// bouton 23 (indicateur « marche arrière enclenchée ») reste inchangé. Indice 0 inutilisé.
-const REMAP_BOUTONS: [u8; 24] = [
+/// Nombre de vrais boutons HID du G27 (1–23), remappables par l'utilisateur.
+pub const NB_BOUTONS_G27: usize = 23;
+
+/// Type du remappage : indexé par le numéro de bouton **G27** (1–23), la valeur est le
+/// numéro de bouton **vJoy** émis (0 = non émis). Indice 0 inutilisé (boutons 1-indexés).
+pub type RemapBoutons = [u8; NB_BOUTONS_G27 + 1];
+
+/// Remappage **par défaut** des boutons HID du G27 vers les numéros vJoy (préférence
+/// initiale de l'utilisateur). Le bouton 23 (« marche arrière enclenchée ») reste 23.
+pub const REMAP_DEFAUT: RemapBoutons = [
     0, // indice 0 inutilisé (boutons 1-indexés)
     16, 14, 15, 13, 8, 7, 2, 1, 10, 11, // G27 1–10
     12, 9, 17, 18, 19, 20, 21, 22, 4, 6, // G27 11–20
     3, 5, 23, // G27 21–23
 ];
 
-/// Convertit les entrées décodées du G27 en position vJoy.
+/// Construit un [`RemapBoutons`] depuis une liste plate de 23 cibles vJoy (G27 1→23),
+/// telle que persistée en config. Les valeurs manquantes reprennent le défaut ; chaque
+/// cible est bornée à `0..=32` (0 = bouton non émis).
+#[must_use]
+pub fn remap_depuis_liste(valeurs: &[u8]) -> RemapBoutons {
+    let mut remap = REMAP_DEFAUT;
+    for bouton_g27 in 1..=NB_BOUTONS_G27 {
+        remap[bouton_g27] = valeurs
+            .get(bouton_g27 - 1)
+            .copied()
+            .unwrap_or(REMAP_DEFAUT[bouton_g27])
+            .min(32);
+    }
+    remap
+}
+
+/// Liste plate des 23 cibles vJoy d'un [`RemapBoutons`] (G27 1→23), pour la persistance.
+#[must_use]
+pub fn remap_vers_liste(remap: &RemapBoutons) -> Vec<u8> {
+    remap[1..=NB_BOUTONS_G27].to_vec()
+}
+
+/// Convertit les entrées décodées du G27 en position vJoy, en appliquant le `remap`
+/// de boutons demandé.
 ///
 /// Mappage : volant → axe X, accélérateur → axe Y, frein → axe Z, embrayage →
-/// curseur ; boutons recopiés tels quels ; chapeau converti en POV continu.
+/// curseur ; boutons remappés ; chapeau en POV continu **et** en stick (Rx/Ry).
 #[must_use]
-pub fn position_depuis_entrees(entrees: &EntreesG27) -> JoystickPositionV2 {
+pub fn position_depuis_entrees(entrees: &EntreesG27, remap: &RemapBoutons) -> JoystickPositionV2 {
     let (stick_x, stick_y) = chapeau_vers_stick(entrees.chapeau);
     JoystickPositionV2 {
         axis_x: vers_axe(u32::from(entrees.volant), u32::from(u16::MAX)),
         axis_y: vers_axe(u32::from(entrees.accelerateur), u32::from(u8::MAX)),
         axis_z: vers_axe(u32::from(entrees.frein), u32::from(u8::MAX)),
         slider: vers_axe(u32::from(entrees.embrayage), u32::from(u8::MAX)),
-        buttons: boutons_avec_marche_arriere(entrees).cast_signed(),
+        buttons: boutons_avec_marche_arriere(entrees, remap).cast_signed(),
         hats: chapeau_vers_pov(entrees.chapeau),
         // Le D-pad est aussi exposé comme un **stick** sur Rx/Ry : certains écrans
         // (la map de Forza) se naviguent au stick analogique, pas au POV ni aux flèches.
@@ -55,11 +83,11 @@ pub fn position_depuis_entrees(entrees: &EntreesG27) -> JoystickPositionV2 {
     }
 }
 
-/// Masque des boutons vJoy : les boutons HID du G27 **remappés** selon
-/// [`REMAP_BOUTONS`], + la marche arrière (depuis le levier enfoncé) sur
-/// [`NUMERO_BOUTON_MARCHE_ARRIERE`], + les 4 directions du chapeau en boutons.
-fn boutons_avec_marche_arriere(entrees: &EntreesG27) -> u32 {
-    let mut masque = remapper_boutons(entrees.boutons.masque());
+/// Masque des boutons vJoy : les boutons HID du G27 **remappés** selon `remap`, + la
+/// marche arrière (depuis le levier enfoncé) sur [`NUMERO_BOUTON_MARCHE_ARRIERE`], + les
+/// 4 directions du chapeau en boutons.
+fn boutons_avec_marche_arriere(entrees: &EntreesG27, remap: &RemapBoutons) -> u32 {
+    let mut masque = remapper_boutons(entrees.boutons.masque(), remap);
     if entrees.marche_arriere {
         masque |= 1 << (NUMERO_BOUTON_MARCHE_ARRIERE - 1);
     }
@@ -108,12 +136,13 @@ fn chapeau_vers_stick(chapeau: u8) -> (i32, i32) {
     (x, y)
 }
 
-/// Applique [`REMAP_BOUTONS`] : pour chaque bouton G27 armé dans `masque_g27` (bit
-/// `n-1` = bouton G27 `n`), arme le bouton vJoy correspondant. Renvoie le masque vJoy.
-fn remapper_boutons(masque_g27: u32) -> u32 {
+/// Applique `remap` : pour chaque bouton G27 armé dans `masque_g27` (bit `n-1` = bouton
+/// G27 `n`), arme le bouton vJoy correspondant. Une cible `0` (ou hors `1..=32`) n'émet
+/// rien. Renvoie le masque vJoy.
+fn remapper_boutons(masque_g27: u32, remap: &RemapBoutons) -> u32 {
     let mut sortie = 0u32;
-    for (bouton_g27, &bouton_vjoy) in REMAP_BOUTONS.iter().enumerate().skip(1) {
-        if masque_g27 & (1u32 << (bouton_g27 - 1)) != 0 {
+    for (bouton_g27, &bouton_vjoy) in remap.iter().enumerate().skip(1) {
+        if (1..=32).contains(&bouton_vjoy) && masque_g27 & (1u32 << (bouton_g27 - 1)) != 0 {
             sortie |= 1u32 << (bouton_vjoy - 1);
         }
     }
@@ -143,7 +172,7 @@ fn chapeau_vers_pov(chapeau: u8) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{AXE_MAX, POV_CENTRE, position_depuis_entrees};
+    use super::{AXE_MAX, POV_CENTRE, REMAP_DEFAUT, position_depuis_entrees};
     use crate::entree::{EntreesG27, entrees_depuis_rapport};
 
     fn entrees(volant: u16, accel: u8, frein: u8, embr: u8) -> EntreesG27 {
@@ -162,7 +191,7 @@ mod tests {
     fn axes_mis_a_l_echelle() {
         // Le volant est un axe 14 bits : ses 2 bits de poids faible (boutons 21/22)
         // sont masqués, donc le maximum décodé est 0xFFFC, pas 0xFFFF.
-        let position = position_depuis_entrees(&entrees(u16::MAX, u8::MAX, 0, 0));
+        let position = position_depuis_entrees(&entrees(u16::MAX, u8::MAX, 0, 0), &REMAP_DEFAUT);
         assert!(
             (AXE_MAX - 4..=AXE_MAX).contains(&position.axis_x),
             "axe_x={}",
@@ -171,14 +200,14 @@ mod tests {
         assert_eq!(position.axis_y, AXE_MAX);
         assert_eq!(position.axis_z, 0);
 
-        let centre = position_depuis_entrees(&entrees(0x8000, 0, 0, 0));
+        let centre = position_depuis_entrees(&entrees(0x8000, 0, 0, 0), &REMAP_DEFAUT);
         assert!(
             (16_000..=16_600).contains(&centre.axis_x),
             "axe={}",
             centre.axis_x
         );
 
-        let zero = position_depuis_entrees(&entrees(0, 0, 0, 0));
+        let zero = position_depuis_entrees(&entrees(0, 0, 0, 0), &REMAP_DEFAUT);
         assert_eq!(zero.axis_x, 0);
     }
 
@@ -186,7 +215,7 @@ mod tests {
     fn boutons_recopies() {
         let mut rapport = [0u8; 11];
         rapport[0] = 0b0101_0000; // octet 0 bits 4 et 6 = boutons G27 1 et 3 (nibble bas = chapeau)
-        let position = position_depuis_entrees(&entrees_depuis_rapport(&rapport));
+        let position = position_depuis_entrees(&entrees_depuis_rapport(&rapport), &REMAP_DEFAUT);
         // Remappage : G27 1 → vJoy 16 (bit 15), G27 3 → vJoy 15 (bit 14).
         let attendu = (1i32 << 15) | (1i32 << 14);
         assert_eq!(position.buttons & attendu, attendu);
@@ -196,13 +225,13 @@ mod tests {
     fn remappage_des_boutons() {
         // Quelques correspondances de la table : G27 8 → vJoy 1, G27 21 → vJoy 3,
         // G27 1 → vJoy 16, et le bouton 23 reste inchangé.
-        assert_eq!(super::remapper_boutons(1 << 7), 1 << 0);
-        assert_eq!(super::remapper_boutons(1 << 20), 1 << 2);
-        assert_eq!(super::remapper_boutons(1 << 0), 1 << 15);
-        assert_eq!(super::remapper_boutons(1 << 22), 1 << 22);
+        assert_eq!(super::remapper_boutons(1 << 7, &REMAP_DEFAUT), 1 << 0);
+        assert_eq!(super::remapper_boutons(1 << 20, &REMAP_DEFAUT), 1 << 2);
+        assert_eq!(super::remapper_boutons(1 << 0, &REMAP_DEFAUT), 1 << 15);
+        assert_eq!(super::remapper_boutons(1 << 22, &REMAP_DEFAUT), 1 << 22);
         // Bijection : tous les boutons G27 1–23 armés couvrent exactement vJoy 1–23.
         let tous = (0..23).fold(0u32, |acc, bit| acc | (1u32 << bit));
-        assert_eq!(super::remapper_boutons(tous), tous);
+        assert_eq!(super::remapper_boutons(tous, &REMAP_DEFAUT), tous);
     }
 
     #[test]
@@ -239,7 +268,7 @@ mod tests {
         // Le chapeau reste exposé en POV ET dupliqué en boutons (octet 0, nibble bas).
         let mut rapport = [0u8; 11];
         rapport[0] = 0; // direction haut (N)
-        let position = position_depuis_entrees(&entrees_depuis_rapport(&rapport));
+        let position = position_depuis_entrees(&entrees_depuis_rapport(&rapport), &REMAP_DEFAUT);
         assert_eq!(position.hats, 0, "POV haut = 0 centi-degré");
         let haut = 1i32 << (super::NUMERO_BOUTON_CHAPEAU_HAUT - 1);
         assert_eq!(position.buttons & haut, haut, "bouton haut aussi armé");
@@ -253,13 +282,15 @@ mod tests {
         let mut rapport = [0u8; 11];
         rapport[OCTET_LEVIER_ETAT] = 0x9c;
         assert_eq!(
-            position_depuis_entrees(&entrees_depuis_rapport(&rapport)).buttons & bit_ma,
+            position_depuis_entrees(&entrees_depuis_rapport(&rapport), &REMAP_DEFAUT).buttons
+                & bit_ma,
             0
         );
         // Levier enfoncé : la marche arrière arme son bouton dédié.
         rapport[OCTET_LEVIER_ETAT] = 0x9c | BIT_LEVIER_ENFONCE;
         assert_eq!(
-            position_depuis_entrees(&entrees_depuis_rapport(&rapport)).buttons & bit_ma,
+            position_depuis_entrees(&entrees_depuis_rapport(&rapport), &REMAP_DEFAUT).buttons
+                & bit_ma,
             bit_ma
         );
     }
@@ -269,17 +300,17 @@ mod tests {
         let mut releve = [0u8; 10];
         releve[0] = 8; // chapeau relâché (centré)
         assert_eq!(
-            position_depuis_entrees(&entrees_depuis_rapport(&releve)).hats,
+            position_depuis_entrees(&entrees_depuis_rapport(&releve), &REMAP_DEFAUT).hats,
             POV_CENTRE
         );
         releve[0] = 0; // direction haut (N) → 0 centi-degré
         assert_eq!(
-            position_depuis_entrees(&entrees_depuis_rapport(&releve)).hats,
+            position_depuis_entrees(&entrees_depuis_rapport(&releve), &REMAP_DEFAUT).hats,
             0
         );
         releve[0] = 2; // direction est (E) → 9000 centi-degrés
         assert_eq!(
-            position_depuis_entrees(&entrees_depuis_rapport(&releve)).hats,
+            position_depuis_entrees(&entrees_depuis_rapport(&releve), &REMAP_DEFAUT).hats,
             9000
         );
     }

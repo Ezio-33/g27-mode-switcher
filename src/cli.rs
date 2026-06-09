@@ -877,7 +877,10 @@ fn run_ffb_pont(id: Option<u32>, sans_masquage: bool) -> ExitCode {
     };
 
     let pont = match pont::Pont::demarrer_pont_ffb(id_vjoy, masquer, options) {
-        Ok(pont) => pont,
+        Ok(pont) => {
+            pont.reconfigurer_remap(pont::remap_depuis_liste(&config.pont.remap_boutons));
+            pont
+        }
         Err(erreur) => {
             eprintln!("Erreur : {erreur}");
             return ExitCode::FAILURE;

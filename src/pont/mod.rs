@@ -15,7 +15,10 @@ pub use detection::{Composant, Prerequis, detecter};
 use std::sync::mpsc::Sender;
 
 use crate::feeder::{self, DemandeFfb, Feeder};
-pub use crate::feeder::{OptionsClavier, OptionsPont};
+pub use crate::feeder::{
+    NB_BOUTONS_G27, OptionsClavier, OptionsPont, REMAP_DEFAUT, RemapBoutons, remap_depuis_liste,
+    remap_vers_liste,
+};
 use crate::ffb::MessageFfb;
 use crate::hidhide::{self, MasquageGarde};
 
@@ -139,6 +142,18 @@ impl Pont {
     /// Entrée/Échap) sans interrompre le pont ni ré-acquérir le device vJoy.
     pub fn reconfigurer_clavier(&self, options: OptionsClavier) {
         self.feeder.reconfigurer_clavier(options);
+    }
+
+    /// Reconfigure **à chaud** le remappage des boutons (éditeur GUI).
+    pub fn reconfigurer_remap(&self, remap: RemapBoutons) {
+        self.feeder.reconfigurer_remap(remap);
+    }
+
+    /// Masque des boutons **bruts** du G27 au dernier rapport (pour la capture dans
+    /// l'éditeur de remappage : bit `n-1` = bouton G27 `n`).
+    #[must_use]
+    pub fn boutons_bruts(&self) -> u32 {
+        self.feeder.boutons_bruts()
     }
 
     /// Change le **masquage** du G27 à chaud : mémorise la préférence (appliquée aussi

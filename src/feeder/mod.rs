@@ -15,10 +15,13 @@
 
 mod mapping;
 
-pub use mapping::position_depuis_entrees;
+pub use mapping::{
+    NB_BOUTONS_G27, REMAP_DEFAUT, RemapBoutons, position_depuis_entrees, remap_depuis_liste,
+    remap_vers_liste,
+};
 
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -72,6 +75,14 @@ pub struct OptionsClavier {
     pub retour: u8,
 }
 
+/// État partagé entre le worker et l'extérieur : réglages relus à chaud (clavier,
+/// remappage) et remontée des boutons bruts du G27 (pour l'éditeur de remappage).
+struct Partage {
+    clavier: Arc<Mutex<OptionsClavier>>,
+    remap: Arc<Mutex<RemapBoutons>>,
+    boutons_bruts: Arc<AtomicU32>,
+}
+
 /// Pause de la boucle quand l'alimentation est suspendue (axes en pause).
 const DELAI_PAUSE_MS: u64 = 15;
 
@@ -121,6 +132,11 @@ pub struct Feeder {
     arret: Arc<AtomicBool>,
     /// Réglages clavier relus à chaud par le worker (reconfigurables sans ré-acquérir).
     clavier: Arc<Mutex<OptionsClavier>>,
+    /// Remappage des boutons relu à chaud par le worker (éditeur GUI à chaud).
+    remap: Arc<Mutex<RemapBoutons>>,
+    /// Dernier masque de boutons **bruts** du G27 (avant remappage), pour la capture
+    /// dans l'éditeur de remappage (bit `n-1` = bouton G27 `n`).
+    boutons_bruts: Arc<AtomicU32>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -146,15 +162,21 @@ impl Feeder {
         let actif = Arc::new(AtomicBool::new(true));
         let arret = Arc::new(AtomicBool::new(false));
         let clavier = Arc::new(Mutex::new(OptionsClavier::default()));
+        let remap = Arc::new(Mutex::new(REMAP_DEFAUT));
+        let boutons_bruts = Arc::new(AtomicU32::new(0));
         let (tx, rx) = mpsc::channel();
 
         let worker = {
             let actif = Arc::clone(&actif);
             let arret = Arc::clone(&arret);
-            let clavier = Arc::clone(&clavier);
+            let partage = Partage {
+                clavier: Arc::clone(&clavier),
+                remap: Arc::clone(&remap),
+                boutons_bruts: Arc::clone(&boutons_bruts),
+            };
             thread::Builder::new()
                 .name("g27-feeder".to_owned())
-                .spawn(move || boucle_feeder(id_vjoy, &actif, &arret, &tx, ffb, &clavier))
+                .spawn(move || boucle_feeder(id_vjoy, &actif, &arret, &tx, ffb, &partage))
                 .map_err(ErreurFeeder::Demarrage)?
         };
 
@@ -163,6 +185,8 @@ impl Feeder {
                 actif,
                 arret,
                 clavier,
+                remap,
+                boutons_bruts,
                 worker: Some(worker),
             }),
             // Le worker a déjà relâché le device vJoy (garde) avant de se terminer.
@@ -201,6 +225,21 @@ impl Feeder {
         if let Ok(mut verrou) = self.clavier.lock() {
             *verrou = options;
         }
+    }
+
+    /// Reconfigure **à chaud** le remappage des boutons (éditeur GUI) : le worker
+    /// l'applique au rapport suivant, sans ré-acquérir le device vJoy.
+    pub fn reconfigurer_remap(&self, remap: RemapBoutons) {
+        if let Ok(mut verrou) = self.remap.lock() {
+            *verrou = remap;
+        }
+    }
+
+    /// Masque des boutons **bruts** du G27 (avant remappage) au dernier rapport lu :
+    /// sert à la **capture** dans l'éditeur de remappage (bit `n-1` = bouton G27 `n`).
+    #[must_use]
+    pub fn boutons_bruts(&self) -> u32 {
+        self.boutons_bruts.load(Ordering::Relaxed)
     }
 }
 
@@ -285,7 +324,7 @@ fn boucle_feeder(
     arret: &AtomicBool,
     tx: &Sender<Result<(), ErreurFeeder>>,
     ffb: DemandeFfb,
-    clavier_partage: &Mutex<OptionsClavier>,
+    partage: &Partage,
 ) {
     // AcquireVJD ici, sur le thread worker (jamais sur le thread appelant/GUI).
     let vjoy = match preparer_vjoy(id) {
@@ -300,7 +339,7 @@ fn boucle_feeder(
     // (`RelinquishVJD`, qui stoppe les callbacks) PUIS on libère le userdata FFB.
     let (mut entree_pont, _recepteur, options) = greffer_recepteur(ffb, vjoy, id);
     // Réglages clavier initiaux dans le verrou partagé (la GUI les reconfigure à chaud).
-    initialiser_clavier(clavier_partage, options);
+    initialiser_clavier(&partage.clavier, options);
     // Garde RAII : relâche le device vJoy (reset + RelinquishVJD) au `Drop`, sur CE
     // thread, quel que soit le mode de sortie du worker (arrêt, erreur, panique).
     let _device = DeviceVjoyAcquis { vjoy, id };
@@ -355,11 +394,16 @@ fn boucle_feeder(
             thread::sleep(Duration::from_millis(DELAI_PAUSE_MS));
             continue;
         }
-        relire_clavier(clavier_partage, &mut clavier, &mut clavier_config);
+        relire_clavier(&partage.clavier, &mut clavier, &mut clavier_config);
         match lecteur.lire(DELAI_LECTURE_MS) {
             Ok(true) => {
                 let entrees = entrees_depuis_rapport(lecteur.rapport());
-                let mut position = position_depuis_entrees(&entrees);
+                // Boutons bruts exposés pour la capture de l'éditeur de remappage.
+                partage
+                    .boutons_bruts
+                    .store(entrees.boutons.masque(), Ordering::Relaxed);
+                let remap = partage.remap.lock().map_or(REMAP_DEFAUT, |r| *r);
+                let mut position = position_depuis_entrees(&entrees, &remap);
                 let _ = vjoy.mettre_a_jour(id, &mut position);
                 if let Some(clavier) = clavier.as_mut() {
                     clavier.appliquer(entrees.chapeau, position.buttons.cast_unsigned());

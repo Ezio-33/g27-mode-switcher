@@ -20,6 +20,7 @@ use g27_mode_switcher::config::Config;
 use g27_mode_switcher::pont::{self, Composant, ErreurPont, Pont, Prerequis};
 
 use super::log::{LineKind, LogBuffer};
+use super::remap::EditeurRemap;
 use super::theme;
 
 /// Intervalle de re-détection des prérequis quand le pont est inactif.
@@ -34,6 +35,8 @@ pub struct CartePont {
     demarrage: Option<Receiver<Result<Pont, ErreurPont>>>,
     prerequis: Prerequis,
     derniere_detection: Instant,
+    /// Éditeur de remappage des boutons (fenêtre flottante).
+    editeur: EditeurRemap,
 }
 
 impl CartePont {
@@ -45,6 +48,7 @@ impl CartePont {
             demarrage: None,
             prerequis: pont::detecter(),
             derniere_detection: Instant::now(),
+            editeur: EditeurRemap::default(),
         }
     }
 
@@ -88,6 +92,8 @@ impl CartePont {
                 }
             }
         });
+        self.editeur
+            .fenetre(ui.ctx(), config, self.pont.as_ref(), log);
     }
 
     /// Récupère (sans bloquer) le résultat d'un démarrage lancé en arrière-plan.
@@ -143,7 +149,7 @@ impl CartePont {
             .small()
             .color(theme::TEXT_MUTED),
         );
-        controles_options(ui, config, self.pont.as_mut(), log);
+        controles_options(ui, config, self.pont.as_mut(), &mut self.editeur, log);
         ui.add_space(12.0);
         let bouton =
             egui::Button::new(RichText::new("Arrêter le pont").color(theme::TEXT).strong())
@@ -181,7 +187,7 @@ impl CartePont {
             .small()
             .color(theme::TEXT_DIM),
         );
-        controles_options(ui, config, self.pont.as_mut(), log);
+        controles_options(ui, config, self.pont.as_mut(), &mut self.editeur, log);
         ui.add_space(12.0);
         if bouton_or(ui, "Démarrer le pont").clicked()
             && let Some(pont) = self.pont.as_mut()
@@ -220,7 +226,7 @@ impl CartePont {
                 }
             });
         });
-        controles_options(ui, config, None, log);
+        controles_options(ui, config, None, &mut self.editeur, log);
         ui.add_space(12.0);
         if bouton_or(ui, "Démarrer le pont").clicked() {
             let id = config.pont.id_vjoy;
@@ -231,11 +237,16 @@ impl CartePont {
                 bouton_valider: config.pont.bouton_valider,
                 bouton_retour: config.pont.bouton_retour,
             };
+            let remap = pont::remap_depuis_liste(&config.pont.remap_boutons);
             let (tx, rx) = mpsc::channel();
             // Acquisition vJoy hors du thread GUI (cf. en-tête du module). Pont FFB
-            // complet : le retour de force du jeu est recopié vers le G27.
+            // complet : le retour de force du jeu est recopié vers le G27. Le remappage
+            // mémorisé est appliqué dès que le device est acquis.
             std::thread::spawn(move || {
-                let _ = tx.send(Pont::demarrer_pont_ffb(id, masquer, options));
+                let resultat = Pont::demarrer_pont_ffb(id, masquer, options).inspect(|pont| {
+                    pont.reconfigurer_remap(remap);
+                });
+                let _ = tx.send(resultat);
             });
             self.demarrage = Some(rx);
             log.push(LineKind::Info, "Démarrage du pont demandé\u{2026}");
@@ -273,6 +284,7 @@ fn controles_options(
     ui: &mut egui::Ui,
     config: &mut Config,
     mut pont_actif: Option<&mut Pont>,
+    editeur: &mut EditeurRemap,
     log: &LogBuffer,
 ) {
     ui.add_space(8.0);
@@ -335,6 +347,9 @@ fn controles_options(
             retour: config.pont.bouton_retour,
         });
     }
+
+    ui.add_space(10.0);
+    editeur.bouton_ouvrir(ui);
 }
 
 /// Bouton d'action doré pleine largeur (style « Démarrer »).

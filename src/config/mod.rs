@@ -148,6 +148,15 @@ pub struct Pont {
     pub bouton_valider: u8,
     /// Bouton **vJoy** (1-indexé) qui envoie **Échap** au clavier (retour ; `0` = aucun).
     pub bouton_retour: u8,
+    /// Remappage des boutons : liste de 23 cibles vJoy (bouton G27 `i+1` → valeur `[i]`,
+    /// `0` = non émis). Éditable via la fenêtre de remappage. Défaut : [`REMAP_DEFAUT`].
+    #[serde(default = "remap_defaut_liste")]
+    pub remap_boutons: Vec<u8>,
+}
+
+/// Liste de remappage par défaut (pour `serde(default)`).
+fn remap_defaut_liste() -> Vec<u8> {
+    crate::feeder::remap_vers_liste(&crate::feeder::REMAP_DEFAUT)
 }
 
 impl Default for Pont {
@@ -159,6 +168,7 @@ impl Default for Pont {
             chapeau_vers_clavier: false,
             bouton_valider: 0,
             bouton_retour: 0,
+            remap_boutons: remap_defaut_liste(),
         }
     }
 }
@@ -268,6 +278,10 @@ impl Config {
         // Boutons clavier : 0 = aucun, sinon 1..=32 (largeur du masque de boutons vJoy).
         self.pont.bouton_valider = self.pont.bouton_valider.min(32);
         self.pont.bouton_retour = self.pont.bouton_retour.min(32);
+        // Remappage : normalise à exactement 23 cibles, chacune bornée (aller-retour typé).
+        self.pont.remap_boutons = crate::feeder::remap_vers_liste(
+            &crate::feeder::remap_depuis_liste(&self.pont.remap_boutons),
+        );
     }
 }
 

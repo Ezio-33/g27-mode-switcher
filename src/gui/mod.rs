@@ -3,6 +3,7 @@
 mod app;
 mod carte_pont;
 mod log;
+mod remap;
 mod theme;
 
 use std::process::ExitCode;
