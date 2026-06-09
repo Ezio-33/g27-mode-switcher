@@ -286,7 +286,9 @@ impl App {
                     });
                 });
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                // Enroulé : à la taille de police relevée, les préréglages passent à la
+                // ligne au lieu de déborder à largeur réduite.
+                ui.horizontal_wrapped(|ui| {
                     for (label, degrees) in RANGE_PRESETS {
                         let active = self.range_deg == degrees;
                         let (fill, text_color) = if active {

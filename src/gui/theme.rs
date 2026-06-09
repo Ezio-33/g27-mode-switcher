@@ -148,9 +148,11 @@ fn install_style(ctx: &egui::Context) {
         TextStyle::Button,
         FontId::new(16.0, FontFamily::Proportional),
     );
+    // « Small » porté à 16 px (= corps) : baseline accessible, plus aucun texte secondaire
+    // sous cette taille. La hiérarchie passe par la couleur/graisse, pas par un texte minuscule.
     style.text_styles.insert(
         TextStyle::Small,
-        FontId::new(15.0, FontFamily::Proportional),
+        FontId::new(16.0, FontFamily::Proportional),
     );
 
     style.spacing.item_spacing = egui::vec2(10.0, 10.0);
