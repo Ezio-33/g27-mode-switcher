@@ -38,11 +38,12 @@ impl CarteForza {
     pub fn afficher(&mut self, ui: &mut egui::Ui, config: &mut Config, log: &LogBuffer) {
         theme::card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            etiquette_section(ui, "RETOUR DE FORCE FORZA (TÉLÉMÉTRIE)");
+            etiquette_section(ui, "🏁  RETOUR DE FORCE FORZA (TÉLÉMÉTRIE)");
             ui.add_space(4.0);
             ui.label(
-                RichText::new("Aucun prérequis — ni vJoy ni HidHide, tout passe par le jeu.")
-                    .small()
+                RichText::new("✅  Aucun prérequis — ni vJoy ni HidHide, tout passe par le jeu.")
+                    .size(14.0)
+                    .strong()
                     .color(theme::SUCCESS),
             );
             ui.add_space(10.0);
@@ -77,7 +78,7 @@ impl CarteForza {
         }
         ui.add_space(12.0);
         let bouton = egui::Button::new(
-            RichText::new("Arrêter le mode Forza")
+            RichText::new("⏹  Arrêter le mode Forza")
                 .color(theme::TEXT)
                 .strong(),
         )
@@ -99,7 +100,7 @@ impl CarteForza {
         ui.add_space(8.0);
         let _ = reglages_force(ui, config);
         ui.add_space(12.0);
-        if bouton_or(ui, "Démarrer le mode Forza").clicked() {
+        if bouton_or(ui, "▶  Démarrer le mode Forza").clicked() {
             self.demarrer(config, log);
         }
     }
@@ -221,7 +222,12 @@ fn bouton_or(ui: &mut egui::Ui, texte: &str) -> egui::Response {
     ui.add(bouton)
 }
 
-/// Petit label de section (majuscules, atténué), identique aux autres cartes.
+/// Label de section (majuscules, atténué), identique aux autres cartes.
 fn etiquette_section(ui: &mut egui::Ui, texte: &str) {
-    ui.label(RichText::new(texte).small().strong().color(theme::TEXT_DIM));
+    ui.label(
+        RichText::new(texte)
+            .size(15.0)
+            .strong()
+            .color(theme::TEXT_DIM),
+    );
 }

@@ -79,7 +79,7 @@ impl CartePont {
 
         theme::card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            etiquette_section(ui, "PONT VJOY");
+            etiquette_section(ui, "🔌  PONT VJOY");
             ui.add_space(10.0);
             if self.demarrage.is_some() {
                 afficher_demarrage(ui);
@@ -151,11 +151,14 @@ impl CartePont {
         );
         controles_options(ui, config, self.pont.as_mut(), &mut self.editeur, log);
         ui.add_space(12.0);
-        let bouton =
-            egui::Button::new(RichText::new("Arrêter le pont").color(theme::TEXT).strong())
-                .fill(theme::BG_ELEVATED)
-                .stroke(egui::Stroke::new(1.0, theme::BORDER_STRONG))
-                .min_size(egui::vec2(ui.available_width(), 38.0));
+        let bouton = egui::Button::new(
+            RichText::new("⏹  Arrêter le pont")
+                .color(theme::TEXT)
+                .strong(),
+        )
+        .fill(theme::BG_ELEVATED)
+        .stroke(egui::Stroke::new(1.0, theme::BORDER_STRONG))
+        .min_size(egui::vec2(ui.available_width(), 38.0));
         if ui.add(bouton).clicked()
             && let Some(pont) = self.pont.as_mut()
         {
@@ -189,7 +192,7 @@ impl CartePont {
         );
         controles_options(ui, config, self.pont.as_mut(), &mut self.editeur, log);
         ui.add_space(12.0);
-        if bouton_or(ui, "Démarrer le pont").clicked()
+        if bouton_or(ui, "▶  Démarrer le pont").clicked()
             && let Some(pont) = self.pont.as_mut()
         {
             match pont.reprendre() {
@@ -228,7 +231,7 @@ impl CartePont {
         });
         controles_options(ui, config, None, &mut self.editeur, log);
         ui.add_space(12.0);
-        if bouton_or(ui, "Démarrer le pont").clicked() {
+        if bouton_or(ui, "▶  Démarrer le pont").clicked() {
             let id = config.pont.id_vjoy;
             let masquer = config.pont.masquer_g27_au_demarrage;
             let options = pont::OptionsPont {
@@ -456,7 +459,12 @@ fn ligne_composant(ui: &mut egui::Ui, nom: &str, composant: &Composant) {
     }
 }
 
-/// Petit label de section (majuscules, atténué), identique aux autres cartes.
+/// Label de section (majuscules, atténué), identique aux autres cartes.
 fn etiquette_section(ui: &mut egui::Ui, texte: &str) {
-    ui.label(RichText::new(texte).small().strong().color(theme::TEXT_DIM));
+    ui.label(
+        RichText::new(texte)
+            .size(15.0)
+            .strong()
+            .color(theme::TEXT_DIM),
+    );
 }

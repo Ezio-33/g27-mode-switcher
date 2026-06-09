@@ -184,12 +184,12 @@ impl App {
     fn card_mode(&mut self, ui: &mut egui::Ui) {
         theme::card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            section_label(ui, "MODE DU VOLANT");
+            section_label(ui, "🎮  MODE DU VOLANT");
             ui.add_space(8.0);
             match self.status {
                 Status::Compatibility => {
                     let button = egui::Button::new(
-                        RichText::new("Basculer en mode 900° natif")
+                        RichText::new("🔓  Basculer en mode 900° natif")
                             .color(theme::BG_BASE)
                             .strong(),
                     )
@@ -248,7 +248,7 @@ impl App {
         let is_native = self.status == Status::Native;
         theme::card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            section_label(ui, "ANGLE DE ROTATION");
+            section_label(ui, "🔄  ANGLE DE ROTATION");
             ui.add_space(8.0);
             // `commit` : l'utilisateur a fini de régler l'angle (relâché slider,
             // validé la saisie, ou choisi un préréglage) → on envoie et on
@@ -320,7 +320,7 @@ impl App {
         let is_native = self.status == Status::Native;
         theme::card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            section_label(ui, "AUTOCENTRAGE");
+            section_label(ui, "🎯  AUTOCENTRAGE");
             ui.add_space(10.0);
 
             // Désactivation et réactivation (pleine force) sont fonctionnelles en direct.
@@ -765,9 +765,14 @@ fn control_row(
     toggle.expect("control_row : interrupteur non fourni")
 }
 
-/// Petit label de section (majuscules, atténué).
+/// Label de section (majuscules, atténué) — taille relevée pour la lisibilité.
 fn section_label(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).small().strong().color(theme::TEXT_DIM));
+    ui.label(
+        RichText::new(text)
+            .size(15.0)
+            .strong()
+            .color(theme::TEXT_DIM),
+    );
 }
 
 /// Paragraphe des conditions d'utilisation : titre fort + texte atténué (avec retour
