@@ -25,9 +25,10 @@ const VITESSE_PLEINE_M_S: f32 = 8.0;
 /// — les pneus frottent sur place, le volant est **lourd**. ~73 % du max (le plein `0xFFFF`
 /// est jugé trop rigide, mais un poids net est attendu à l'arrêt).
 const POIDS_ARRET: f32 = 48_000.0;
-/// Poids d'autocentrage matériel **en roulant** (sur `0xFFFF`) : les pneus roulent, la
-/// friction chute, le volant **s'allège** nettement.
-const POIDS_ROULANT: f32 = 9_000.0;
+/// Poids d'autocentrage matériel **en roulant** (plateau ≥ ~65 km/h, sur `0xFFFF`) : le
+/// volant s'allège mais **reste ferme à haute vitesse** (cible calée sur le ressenti :
+/// ~15 000 effectif à l'intensité par défaut). Au-delà du seuil, ce poids est maintenu.
+const POIDS_ROULANT: f32 = 25_000.0;
 /// Vitesse (m/s ≈ 65 km/h) où l'allègement atteint son plateau léger : en deçà, le volant
 /// reste **lourd à bas régime** et s'allège en **cosinus** (très progressif), comme une
 /// vraie direction. Au-delà, il reste au poids léger (`POIDS_ROULANT`).
