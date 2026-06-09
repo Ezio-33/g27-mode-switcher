@@ -16,7 +16,7 @@
 mod modele;
 mod pont;
 
-pub use modele::{ReglagesForza, couple_depuis_telemetrie};
+pub use modele::{ReglagesForza, autocentre_depuis_vitesse, couple_depuis_telemetrie};
 pub use pont::{ErreurTelemetrie, PontTelemetrie, StatutTelemetrie};
 
 /// Taille de la partie « Sled » du paquet Data Out (octets). Cette portion est

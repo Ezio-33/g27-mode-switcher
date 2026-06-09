@@ -4,8 +4,11 @@
 //! paquet de télémétrie, calcule le couple ([`couple_depuis_telemetrie`]) et l'écrit au
 //! volant par commande `lg4ff` brute. La force est **rafraîchie à chaque tour** (~125 Hz)
 //! pour satisfaire le watchdog du G27, et **remise au neutre** si le flux se tarit
-//! (jeu fermé/en pause) ou à l'arrêt du pont (RAII). L'autocentrage matériel n'est **pas**
-//! touché ici : il reste géré par sa carte et fournit le centrage à l'arrêt.
+//! (jeu fermé/en pause) ou à l'arrêt du pont (RAII). L'**autocentrage matériel est piloté
+//! ici** : activé à force nulle au démarrage puis **modulé par la vitesse** (lourd à
+//! l'arrêt façon friction de parking, plus léger en roulant) — il fournit la
+//! « consistance » du volant, distincte de la force de virage. Il est **restauré** (plein)
+//! à l'arrêt du pont.
 
 use std::io;
 use std::net::UdpSocket;
@@ -15,11 +18,14 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::autocenter;
 use crate::ffb::{commande_force_constante, commande_stop_forces};
 use crate::hid::{self, NativeLookup};
 use crate::report;
 
-use super::{ReglagesForza, Telemetrie, analyser, couple_depuis_telemetrie};
+use super::{
+    ReglagesForza, Telemetrie, analyser, autocentre_depuis_vitesse, couple_depuis_telemetrie,
+};
 
 /// Délai d'attente d'un paquet UDP par tour de boucle (ms) : court → ~125 Hz de
 /// rafraîchissement de la force même sans nouveau paquet.
@@ -28,6 +34,9 @@ const LECTURE_TIMEOUT_MS: u64 = 8;
 const PERTE_FLUX_MS: u128 = 500;
 /// Taille du tampon de réception (les paquets Data Out font ~324 octets).
 const TAILLE_TAMPON: usize = 2048;
+/// Cadence de réémission de la force d'autocentrage modulée (ms ≈ 20 Hz) : assez pour
+/// suivre la vitesse sans saturer le bus HID (la force constante occupe déjà ~125 Hz).
+const PERIODE_AUTOCENTRE_MS: u64 = 50;
 
 /// Erreurs au démarrage du mode Forza.
 #[derive(Debug, thiserror::Error)]
@@ -196,15 +205,39 @@ impl Drop for PontTelemetrie {
     }
 }
 
-/// Garde RAII de la sortie de force : remet le volant **au neutre** au `Drop`, quel que
-/// soit le mode de sortie du worker (arrêt, erreur, panique).
+/// Garde RAII de la sortie de force vers le G27. À la construction, **active
+/// l'autocentrage matériel à force nulle** (prêt à être modulé par la vitesse, au lieu du
+/// ressort plein constant qui domine tout). Au `Drop` — garanti sur tous les chemins —
+/// remet le volant **au neutre** puis **restaure l'autocentrage plein** (état par défaut).
 struct GardeForce {
     device: hidapi::HidDevice,
+}
+
+impl GardeForce {
+    /// Ouvre la garde et active l'autocentrage matériel à force nulle (modulable ensuite).
+    fn nouvelle(device: hidapi::HidDevice) -> Self {
+        let _ = report::write_report(&device, &autocenter::strength_report(0));
+        let _ = report::write_report(&device, &autocenter::activate_report());
+        Self { device }
+    }
+
+    /// Applique la force constante (couple de virage) au volant.
+    fn appliquer_couple(&self, couple: i32) {
+        let _ = report::write_report(&self.device, &commande_force_constante(couple));
+    }
+
+    /// Règle la force de l'autocentrage matériel (poids modulé par la vitesse).
+    fn appliquer_autocentre(&self, magnitude: u16) {
+        let _ = report::write_report(&self.device, &autocenter::strength_report(magnitude));
+    }
 }
 
 impl Drop for GardeForce {
     fn drop(&mut self) {
         let _ = report::write_report(&self.device, &commande_stop_forces());
+        for commande in autocenter::enable_autocenter_reports() {
+            let _ = report::write_report(&self.device, &commande);
+        }
     }
 }
 
@@ -239,22 +272,25 @@ fn boucle(
     };
     let _ = tx.send(Ok(()));
     tracing::debug!("Mode Forza : écoute de la télémétrie sur le port UDP {port}");
-    let garde = GardeForce { device };
-    boucle_reception(&socket, arret, reglages, etat, &garde.device);
-    // `garde` droppée ici (et sur toute panique) → volant remis au neutre.
+    let garde = GardeForce::nouvelle(device);
+    boucle_reception(&socket, arret, reglages, etat, &garde);
+    // `garde` droppée ici (et sur toute panique) → neutre + autocentrage restauré.
 }
 
-/// Boucle de réception/écriture : décode les paquets, applique et rafraîchit la force.
+/// Boucle de réception/écriture : décode les paquets, applique la force constante (couple
+/// de virage) à chaque tour, et l'autocentrage modulé par la vitesse à ~20 Hz.
 fn boucle_reception(
     socket: &UdpSocket,
     arret: &AtomicBool,
     reglages: &Mutex<ReglagesForza>,
     etat: &EtatPartage,
-    device: &hidapi::HidDevice,
+    garde: &GardeForce,
 ) {
     let mut tampon = [0u8; TAILLE_TAMPON];
     let mut dernier_paquet = Instant::now();
     let mut couple = 0;
+    let mut magnitude = 0u16;
+    let mut prochain_autocentre = Instant::now();
     while !arret.load(Ordering::Relaxed) {
         match socket.recv(&mut tampon) {
             Ok(taille) => {
@@ -262,18 +298,25 @@ fn boucle_reception(
                     dernier_paquet = Instant::now();
                     let r = reglages.lock().map(|g| *g).unwrap_or_default();
                     couple = couple_depuis_telemetrie(&t, &r);
+                    magnitude = autocentre_depuis_vitesse(&t, &r);
                     etat.maj(&t, couple);
                 }
             }
-            // Timeout (pas de paquet ce tour) : on remet au neutre si le flux est tari.
+            // Timeout (pas de paquet ce tour) : on relâche tout si le flux est tari.
             Err(_) if dernier_paquet.elapsed().as_millis() > PERTE_FLUX_MS => {
                 couple = 0;
+                magnitude = 0;
                 etat.perte();
             }
             Err(_) => {}
         }
-        // Rafraîchissement systématique (watchdog du G27) du dernier couple connu.
-        let _ = report::write_report(device, &commande_force_constante(couple));
+        // Force constante rafraîchie à chaque tour (watchdog du G27).
+        garde.appliquer_couple(couple);
+        // Autocentrage modulé réémis périodiquement (suit la vitesse, sans saturer le bus).
+        if Instant::now() >= prochain_autocentre {
+            garde.appliquer_autocentre(magnitude);
+            prochain_autocentre = Instant::now() + Duration::from_millis(PERIODE_AUTOCENTRE_MS);
+        }
     }
 }
 

@@ -579,8 +579,12 @@ dérive des pneus, vitesse) et écrite au volant par commandes `lg4ff` brutes.
    dérive en direct ; le volant reçoit alors le retour de force.
 
 Réglez l'**intensité** à votre goût ; si le volant *fuit* au lieu de résister en
-virage, cochez **« Inverser le sens du couple »**. Gardez l'**autocentrage matériel**
-actif (carte *Autocentrage*) pour la résistance à l'arrêt.
+virage, cochez **« Inverser le sens du couple »**.
+
+Le mode Forza pilote lui-même l'**autocentrage matériel** : **lourd à l'arrêt**
+(friction de parking) puis **s'allégeant en roulant**, comme une vraie direction —
+plus la force de virage déduite de la dérive des pneus. Pas besoin de toucher à la
+carte *Autocentrage* (le mode Forza la prend en charge le temps de la session).
 
 ### Ligne de commande
 

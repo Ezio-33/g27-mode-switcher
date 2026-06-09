@@ -13,13 +13,24 @@ const COUPLE_MAX: i32 = 10000;
 /// Idem en flottant (10000 est exact en `f32`, pas de perte).
 const COUPLE_MAX_F: f32 = 10_000.0;
 
-/// Angle de dérive avant (radians) saturant la force au gain plein (~11°, proche de la
-/// limite d'adhérence). Au-delà, le couple reste à son maximum.
-const DERIVE_PLEINE_RAD: f32 = 0.20;
-/// Vitesse (m/s ≈ 29 km/h) à partir de laquelle le facteur vitesse atteint 1. En deçà, le
-/// couple est réduit linéairement (à l'arrêt : nul — le centrage vient de l'autocentrage
-/// matériel, conservé en parallèle).
+/// Angle de dérive avant (radians) saturant la force de virage au gain plein (~17°). Plus
+/// haut = montée plus **progressive** (évite que le couple sature en permanence et donne
+/// une sensation de ressort rigide qui ramène sans cesse au centre).
+const DERIVE_PLEINE_RAD: f32 = 0.30;
+/// Vitesse (m/s ≈ 29 km/h) à partir de laquelle la force de virage (dérive) atteint son
+/// plein facteur. En deçà, elle est réduite linéairement.
 const VITESSE_PLEINE_M_S: f32 = 8.0;
+
+/// Poids d'autocentrage matériel **à l'arrêt** (sur `0xFFFF`) : la « friction de parking »
+/// — les pneus frottent sur place, le volant est **lourd**. Modéré (bien en deçà du plein
+/// `0xFFFF`, jugé trop rigide).
+const POIDS_ARRET: f32 = 20_000.0;
+/// Poids d'autocentrage matériel **en roulant** (sur `0xFFFF`) : les pneus roulent, la
+/// friction chute, le volant **s'allège**.
+const POIDS_ROULANT: f32 = 5_000.0;
+/// Vitesse (m/s ≈ 43 km/h) au-delà de laquelle l'allègement est complet : le volant passe
+/// **progressivement** de lourd (arrêt) à léger (en roulant), comme une vraie direction.
+const VITESSE_ALLEGEMENT_M_S: f32 = 12.0;
 
 /// Réglages du retour de force Forza, ajustables à chaud.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,9 +78,34 @@ fn arrondir_borne(valeur: f32) -> i32 {
     entier.clamp(-COUPLE_MAX, COUPLE_MAX)
 }
 
+/// Magnitude de l'**autocentrage matériel** (`0..0xFFFF`) déduite de la vitesse : **lourde
+/// à l'arrêt** ([`POIDS_ARRET`], friction de parking) puis **s'allégeant** avec la vitesse
+/// jusqu'à [`POIDS_ROULANT`], le tout modulé par le `gain`. Reproduit une vraie direction
+/// (dure à l'arrêt, légère en roulant). Renvoie `0` hors gameplay (volant libre en menu).
+#[must_use]
+pub fn autocentre_depuis_vitesse(t: &Telemetrie, reglages: &ReglagesForza) -> u16 {
+    if !t.course_active {
+        return 0;
+    }
+    let facteur = (t.vitesse_m_s / VITESSE_ALLEGEMENT_M_S).clamp(0.0, 1.0);
+    let gain = f32::from(reglages.gain) / 100.0;
+    let magnitude = (POIDS_ARRET - facteur * (POIDS_ARRET - POIDS_ROULANT)) * gain;
+    borne_u16(magnitude)
+}
+
+/// Borne un flottant à `0..=0xFFFF` et le convertit en `u16`.
+fn borne_u16(valeur: f32) -> u16 {
+    let borne = valeur.clamp(0.0, f32::from(u16::MAX)).round();
+    // `borne` ∈ [0, 65535] : la conversion ne peut ni tronquer ni perdre de signe.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    {
+        borne as u16
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{COUPLE_MAX, ReglagesForza, couple_depuis_telemetrie};
+    use super::{COUPLE_MAX, ReglagesForza, autocentre_depuis_vitesse, couple_depuis_telemetrie};
     use crate::telemetrie::Telemetrie;
 
     fn telem(course_active: bool, vitesse_m_s: f32, derive_avant: f32) -> Telemetrie {
@@ -119,6 +155,27 @@ mod tests {
             couple_depuis_telemetrie(&t, &direct),
             -couple_depuis_telemetrie(&t, &inverse)
         );
+    }
+
+    #[test]
+    fn autocentre_lourd_a_l_arret_s_allege_en_roulant() {
+        let r = ReglagesForza::default();
+        let arret = autocentre_depuis_vitesse(&telem(true, 0.0, 0.0), &r);
+        let lent = autocentre_depuis_vitesse(&telem(true, 6.0, 0.0), &r);
+        let rapide = autocentre_depuis_vitesse(&telem(true, 30.0, 0.0), &r);
+        // Friction de parking : lourd à l'arrêt, qui s'allège avec la vitesse.
+        assert!(arret > lent && lent > rapide, "{arret} > {lent} > {rapide}");
+        // Jamais le ressort plein (rigidité constante non naturelle), et léger en roulant.
+        assert!(
+            arret < u16::MAX && rapide > 0,
+            "arret={arret} rapide={rapide}"
+        );
+    }
+
+    #[test]
+    fn autocentre_nul_hors_course() {
+        let r = ReglagesForza::default();
+        assert_eq!(autocentre_depuis_vitesse(&telem(false, 40.0, 0.0), &r), 0);
     }
 
     #[test]
