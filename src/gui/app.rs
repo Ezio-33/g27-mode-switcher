@@ -640,26 +640,47 @@ impl eframe::App for App {
     }
 }
 
-/// Dessine des **chevrons de défilement** discrets (▲ en haut / ▼ en bas) aux bords de la
-/// zone défilable, **uniquement** s'il reste du contenu dans cette direction.
+/// Dessine des **chevrons de défilement** discrets (▲ en haut / ▼ en bas), **à droite**
+/// (juste avant la barre de défilement), qui **pulsent** doucement pour attirer l'œil —
+/// affichés **uniquement** s'il reste du contenu dans cette direction.
 fn indicateurs_defilement<R>(ui: &egui::Ui, sortie: &egui::scroll_area::ScrollAreaOutput<R>) {
     let vue = sortie.inner_rect;
     let decalage = sortie.state.offset.y;
-    let painter = ui.painter();
-    if decalage > 1.0 {
-        chevron_defilement(painter, egui::pos2(vue.center().x, vue.top() + 12.0), false);
+    let haut = decalage > 1.0;
+    let bas = decalage + vue.height() < sortie.content_size.y - 1.0;
+    if !haut && !bas {
+        return;
     }
-    if decalage + vue.height() < sortie.content_size.y - 1.0 {
-        chevron_defilement(
-            painter,
-            egui::pos2(vue.center().x, vue.bottom() - 12.0),
-            true,
-        );
+    let intensite = pulsation(ui.ctx());
+    ui.ctx().request_repaint_after(Duration::from_millis(40)); // anime la pulsation
+    let x = vue.right() - 16.0; // collé à droite, juste avant la barre de défilement
+    let painter = ui.painter();
+    if haut {
+        chevron_defilement(painter, egui::pos2(x, vue.top() + 12.0), false, intensite);
+    }
+    if bas {
+        chevron_defilement(painter, egui::pos2(x, vue.bottom() - 12.0), true, intensite);
     }
 }
 
-/// Petit chevron doré sur un halo sombre (visible sur tout fond). `vers_le_bas` → ▼, sinon ▲.
-fn chevron_defilement(painter: &egui::Painter, centre: egui::Pos2, vers_le_bas: bool) {
+/// Facteur de pulsation (≈ `0.45..1.0`) dérivé du temps, pour faire « respirer » un repère.
+fn pulsation(ctx: &egui::Context) -> f32 {
+    let t = ctx.input(|entree| entree.time);
+    // `(t * 3.2).sin()` ∈ [−1, 1] → résultat borné ; la conversion f64→f32 est sûre.
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        (0.45 + 0.55 * (0.5 + 0.5 * (t * 3.2).sin())) as f32
+    }
+}
+
+/// Petit chevron doré (alpha modulé par `intensite`) sur un halo sombre, visible sur tout
+/// fond. `vers_le_bas` → ▼, sinon ▲.
+fn chevron_defilement(
+    painter: &egui::Painter,
+    centre: egui::Pos2,
+    vers_le_bas: bool,
+    intensite: f32,
+) {
     const DEMI_L: f32 = 6.0;
     const DEMI_H: f32 = 4.0;
     painter.circle_filled(centre, 10.0, egui::Color32::from_black_alpha(150));
@@ -667,7 +688,7 @@ fn chevron_defilement(painter: &egui::Painter, centre: egui::Pos2, vers_le_bas: 
     let gauche = egui::pos2(centre.x - DEMI_L, centre.y - dir * DEMI_H);
     let pointe = egui::pos2(centre.x, centre.y + dir * DEMI_H);
     let droite = egui::pos2(centre.x + DEMI_L, centre.y - dir * DEMI_H);
-    let crayon = egui::Stroke::new(2.0, theme::GOLD);
+    let crayon = egui::Stroke::new(2.0, theme::GOLD.gamma_multiply(intensite));
     painter.line_segment([gauche, pointe], crayon);
     painter.line_segment([pointe, droite], crayon);
 }
@@ -717,62 +738,18 @@ fn toggle_switch(ui: &mut egui::Ui, on: bool, enabled: bool) -> egui::Response {
     response
 }
 
-/// Slider d'angle dessiné au painter : piste de fond, portion remplie or, thumb
-/// rond. Le `Response` (clic + glisser) permet d'envoyer la valeur au relâché.
+/// Slider d'angle : s'appuie sur le slider doré partagé ([`super::widgets::curseur_dore`])
+/// en convertissant l'angle (`RANGE_MIN..=RANGE_MAX`) en fraction `0..1` et inversement.
 fn angle_slider(ui: &mut egui::Ui, value: &mut u16, width: f32) -> egui::Response {
-    const HEIGHT: f32 = 22.0;
-    const TRACK_H: f32 = 5.0;
-    const THUMB_R: f32 = 8.0;
-
-    let (rect, mut response) =
-        ui.allocate_exact_size(egui::vec2(width, HEIGHT), egui::Sense::click_and_drag());
-    let enabled = ui.is_enabled();
-
-    let lo = f32::from(RANGE_MIN);
-    let hi = f32::from(RANGE_MAX);
-    let usable_left = rect.left() + THUMB_R;
-    let usable_w = (rect.width() - 2.0 * THUMB_R).max(1.0);
-
-    if enabled && let Some(pos) = response.interact_pointer_pos() {
-        let t = ((pos.x - usable_left) / usable_w).clamp(0.0, 1.0);
-        // `t` ∈ [0, 1] et l'amplitude est bornée → `steps` ∈ [0, 860] : la
-        // conversion ne peut ni tronquer significativement ni perdre de signe.
+    let span = f32::from(RANGE_MAX - RANGE_MIN);
+    let mut fraction = (f32::from(*value) - f32::from(RANGE_MIN)) / span;
+    let response = super::widgets::curseur_dore(ui, &mut fraction, width, 22.0, 8.0);
+    if response.changed() {
+        // `fraction * span` ∈ [0, 860] : la conversion ne peut ni tronquer ni perdre de signe.
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let steps = (t * (hi - lo)).round() as u16;
-        let new = RANGE_MIN + steps;
-        if new != *value {
-            *value = new;
-            response.mark_changed();
-        }
+        let pas = (fraction * span).round() as u16;
+        *value = RANGE_MIN + pas;
     }
-
-    let t = ((f32::from(*value) - lo) / (hi - lo)).clamp(0.0, 1.0);
-    let thumb_x = usable_left + t * usable_w;
-    let cy = rect.center().y;
-    let (fill_color, thumb_color) = if enabled {
-        (theme::GOLD, theme::GOLD_LIGHT)
-    } else {
-        (theme::GOLD_DARK, theme::TEXT_DIM)
-    };
-
-    let painter = ui.painter();
-    let track = egui::Rect::from_min_max(
-        egui::pos2(rect.left(), cy - TRACK_H / 2.0),
-        egui::pos2(rect.right(), cy + TRACK_H / 2.0),
-    );
-    painter.rect_filled(track, egui::CornerRadius::same(3), theme::BG_ELEVATED);
-    let filled = egui::Rect::from_min_max(
-        egui::pos2(rect.left(), cy - TRACK_H / 2.0),
-        egui::pos2(thumb_x, cy + TRACK_H / 2.0),
-    );
-    painter.rect_filled(filled, egui::CornerRadius::same(3), fill_color);
-    painter.circle(
-        egui::pos2(thumb_x, cy),
-        THUMB_R,
-        thumb_color,
-        Stroke::new(2.0, theme::BG_BASE),
-    );
-
     response
 }
 

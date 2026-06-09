@@ -6,6 +6,7 @@ mod carte_pont;
 mod log;
 mod remap;
 mod theme;
+mod widgets;
 
 use std::process::ExitCode;
 

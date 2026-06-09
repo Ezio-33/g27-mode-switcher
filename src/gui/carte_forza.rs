@@ -124,6 +124,16 @@ impl CarteForza {
     }
 }
 
+/// Convertit une fraction `0..1` (position du slider) en gain `0..=100` (%).
+fn gain_depuis_fraction(fraction: f32) -> u8 {
+    let pourcent = (fraction.clamp(0.0, 1.0) * 100.0).round();
+    // `pourcent` ∈ [0, 100] : la conversion ne peut ni tronquer ni perdre de signe.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    {
+        pourcent as u8
+    }
+}
+
 /// Construit les réglages de force depuis la config.
 fn reglages_depuis_config(config: &Config) -> ReglagesForza {
     ReglagesForza {
@@ -157,9 +167,20 @@ fn reglages_force(ui: &mut egui::Ui, config: &mut Config) -> bool {
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.label(RichText::new("Intensité").size(15.0).color(theme::TEXT));
+        // Slider doré compact (même style que l'angle) + valeur « % » à droite.
+        // On réserve ~58 px à droite pour la valeur « 100 % ».
+        let largeur = (ui.available_width() - 58.0).max(60.0);
+        let mut fraction = f32::from(config.forza.gain) / 100.0;
+        if super::widgets::curseur_dore(ui, &mut fraction, largeur, 18.0, 7.0).changed() {
+            config.forza.gain = gain_depuis_fraction(fraction);
+            change = true;
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let curseur = egui::Slider::new(&mut config.forza.gain, 0..=100).suffix(" %");
-            change |= ui.add(curseur).changed();
+            ui.label(
+                RichText::new(format!("{} %", config.forza.gain))
+                    .size(15.0)
+                    .color(theme::GOLD),
+            );
         });
     });
     ui.add_space(4.0);
