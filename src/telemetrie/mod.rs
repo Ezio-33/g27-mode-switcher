@@ -16,7 +16,9 @@
 mod modele;
 mod pont;
 
-pub use modele::{ReglagesForza, autocentre_depuis_vitesse, couple_depuis_telemetrie};
+pub use modele::{
+    ReglagesForza, autocentre_depuis_vitesse, couple_depuis_telemetrie, secousse_depuis_telemetrie,
+};
 pub use pont::{ErreurTelemetrie, PontTelemetrie, StatutTelemetrie};
 
 /// Taille de la partie « Sled » du paquet Data Out (octets). Cette portion est
@@ -27,7 +29,9 @@ const TAILLE_SLED: usize = 232;
 /// Offsets (octets, little-endian) des champs lus dans la partie Sled.
 /// Réf. : format « Data Out » documenté (champs ordonnés, struct compacte sans padding).
 const OFF_COURSE_ACTIVE: usize = 0; // IsRaceOn : u32 (0 = hors gameplay)
+const OFF_ACCEL_Y: usize = 24; // AccelerationY : f32 (vertical : bosses/sauts/atterrissages)
 const OFF_VITESSE_X: usize = 32; // VelocityX : f32 (Y, Z suivent à +4, +8)
+const OFF_SUSPENSION_AVANT_G: usize = 68; // NormalizedSuspensionTravelFrontLeft : f32 (FR à +4)
 const OFF_RUMBLE_AVANT_G: usize = 148; // SurfaceRumbleFrontLeft : f32 (FR à +4)
 const OFF_DERIVE_AVANT_G: usize = 164; // TireSlipAngleFrontLeft : f32 (FR à +4)
 
@@ -43,6 +47,13 @@ pub struct Telemetrie {
     pub derive_avant: f32,
     /// Rugosité de surface moyenne **avant** (0..1 ≈ trottoirs/bandes) : effet de texture.
     pub rumble_avant: f32,
+    /// Accélération **verticale** (m/s²) : bosses, trottoirs, et surtout sauts/atterrissages
+    /// (pic d'accélération à l'impact) → secousses du volant.
+    pub accel_vertical: f32,
+    /// Débattement de suspension avant **normalisé** (moyenne, `0` = détente max/roues en
+    /// l'air, `1` = compression max) : sert à **alléger** le volant quand le train avant
+    /// décolle (sauts).
+    pub suspension_avant: f32,
 }
 
 /// Décode un paquet « Data Out » en [`Telemetrie`]. Renvoie `None` si le paquet est trop
@@ -59,11 +70,15 @@ pub fn analyser(paquet: &[u8]) -> Option<Telemetrie> {
     let derive_d = lire_f32(paquet, OFF_DERIVE_AVANT_G + 4)?;
     let rumble_g = lire_f32(paquet, OFF_RUMBLE_AVANT_G)?;
     let rumble_d = lire_f32(paquet, OFF_RUMBLE_AVANT_G + 4)?;
+    let susp_g = lire_f32(paquet, OFF_SUSPENSION_AVANT_G)?;
+    let susp_d = lire_f32(paquet, OFF_SUSPENSION_AVANT_G + 4)?;
     Some(Telemetrie {
         course_active: lire_u32(paquet, OFF_COURSE_ACTIVE)? != 0,
         vitesse_m_s: (vx * vx + vy * vy + vz * vz).sqrt(),
         derive_avant: f32::midpoint(derive_g, derive_d),
         rumble_avant: f32::midpoint(rumble_g, rumble_d),
+        accel_vertical: lire_f32(paquet, OFF_ACCEL_Y)?,
+        suspension_avant: f32::midpoint(susp_g, susp_d),
     })
 }
 

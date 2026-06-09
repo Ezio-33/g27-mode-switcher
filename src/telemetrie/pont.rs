@@ -25,6 +25,7 @@ use crate::report;
 
 use super::{
     ReglagesForza, Telemetrie, analyser, autocentre_depuis_vitesse, couple_depuis_telemetrie,
+    secousse_depuis_telemetrie,
 };
 
 /// Délai d'attente d'un paquet UDP par tour de boucle (ms) : court → ~125 Hz de
@@ -289,7 +290,9 @@ fn boucle_reception(
     let mut tampon = [0u8; TAILLE_TAMPON];
     let mut dernier_paquet = Instant::now();
     let mut couple = 0;
+    let mut secousse = 0;
     let mut magnitude = 0u16;
+    let mut phase = false;
     let mut prochain_autocentre = Instant::now();
     while !arret.load(Ordering::Relaxed) {
         match socket.recv(&mut tampon) {
@@ -298,6 +301,7 @@ fn boucle_reception(
                     dernier_paquet = Instant::now();
                     let r = reglages.lock().map(|g| *g).unwrap_or_default();
                     couple = couple_depuis_telemetrie(&t, &r);
+                    secousse = secousse_depuis_telemetrie(&t, &r);
                     magnitude = autocentre_depuis_vitesse(&t, &r);
                     etat.maj(&t, couple);
                 }
@@ -305,13 +309,18 @@ fn boucle_reception(
             // Timeout (pas de paquet ce tour) : on relâche tout si le flux est tari.
             Err(_) if dernier_paquet.elapsed().as_millis() > PERTE_FLUX_MS => {
                 couple = 0;
+                secousse = 0;
                 magnitude = 0;
                 etat.perte();
             }
             Err(_) => {}
         }
-        // Force constante rafraîchie à chaque tour (watchdog du G27).
-        garde.appliquer_couple(couple);
+        // Force constante + secousse alternée à chaque tour (~125 Hz) : l'alternance de
+        // signe fait vibrer le volant (rugosité de route, bosses, atterrissages). Watchdog
+        // du G27 satisfait par cette réémission systématique.
+        phase = !phase;
+        let signe = if phase { 1 } else { -1 };
+        garde.appliquer_couple(couple + signe * secousse);
         // Autocentrage modulé réémis périodiquement (suit la vitesse, sans saturer le bus).
         if Instant::now() >= prochain_autocentre {
             garde.appliquer_autocentre(magnitude);

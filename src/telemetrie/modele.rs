@@ -1,10 +1,14 @@
 //! Modèle de force : convertit la télémétrie Forza en couple pour le volant.
 //!
-//! Le couple dominant ressenti sur un volant est le **couple d'auto-alignement** : les
-//! pneus avant, en dérive, génèrent une force qui tend à **ramener le volant au centre**,
-//! proportionnelle à l'angle de dérive (jusqu'à saturation à la limite d'adhérence). On
-//! le module par la **vitesse** (nul à l'arrêt, plein au-delà d'un seuil) et par un
-//! **gain** utilisateur. Module **pur** (aucune E/S), donc testable.
+//! Le modèle combine quatre effets, tous tirés de la télémétrie et modulés par le **gain** :
+//! - **force de virage** (couple d'auto-alignement ∝ dérive des pneus avant, courbe
+//!   progressive) — la résistance ressentie en tournant ;
+//! - **poids** (autocentrage matériel) **lourd à l'arrêt** s'allégeant avec la vitesse ;
+//! - **secousses** (oscillation) de **rugosité de surface** + **impacts verticaux**
+//!   (bosses, atterrissages) — le « grain » de la route et les chocs ;
+//! - **allègement en l'air** : quand le train avant décolle (saut), le volant s'allège.
+//!
+//! Module **pur** (aucune E/S), donc entièrement testable.
 
 use super::Telemetrie;
 
@@ -33,6 +37,21 @@ const POIDS_ROULANT: f32 = 25_000.0;
 /// reste **lourd à bas régime** et s'allège en **cosinus** (très progressif), comme une
 /// vraie direction. Au-delà, il reste au poids léger (`POIDS_ROULANT`).
 const VITESSE_ALLEGEMENT_M_S: f32 = 18.0;
+
+/// Accélération verticale (m/s²) donnant une secousse **pleine** (gros impact / atterrissage).
+const ACCEL_SECOUSSE_PLEINE: f32 = 30.0;
+/// Part max de la secousse due à la **rugosité de surface** (fraction de [`COUPLE_MAX`]) :
+/// vibration continue sur route abîmée, trottoirs, hors-piste.
+const SECOUSSE_RUMBLE_MAX: f32 = 0.30;
+/// Part max de la secousse due aux **impacts verticaux** (fraction de [`COUPLE_MAX`]) :
+/// bosses et surtout **atterrissages** (pic d'accélération verticale).
+const SECOUSSE_IMPACT_MAX: f32 = 0.65;
+/// Débattement de suspension avant (normalisé) en deçà duquel le train avant est « en
+/// l'air » : sous ce seuil, le volant s'allège (saut) ; au-dessus, poids normal.
+const SUSPENSION_SOL_MIN: f32 = 0.12;
+/// Fraction du poids conservée quand le train avant est en pleine détente (saut) : le
+/// volant s'allège sans devenir totalement libre.
+const PLANCHER_AERIEN: f32 = 0.5;
 
 /// Réglages du retour de force Forza, ajustables à chaud.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,7 +86,8 @@ pub fn couple_depuis_telemetrie(t: &Telemetrie, reglages: &ReglagesForza) -> i32
     // dérive — évite un couple « trop prononcé » dès le moindre virage.
     let progressif = derive * derive.abs();
     let facteur_vitesse = (t.vitesse_m_s / VITESSE_PLEINE_M_S).clamp(0.0, 1.0);
-    let mut couple = -progressif * facteur_vitesse * gain;
+    // En l'air (train avant délesté), la force de virage s'efface : plus de grip → volant léger.
+    let mut couple = -progressif * facteur_vitesse * gain * facteur_sol(t);
     if reglages.inverser {
         couple = -couple;
     }
@@ -97,8 +117,32 @@ pub fn autocentre_depuis_vitesse(t: &Telemetrie, reglages: &ReglagesForza) -> u1
     // descente douce jusqu'au plateau léger — bien plus progressif qu'une rampe linéaire.
     let poids = (facteur * core::f32::consts::FRAC_PI_2).cos();
     let gain = f32::from(reglages.gain) / 100.0;
-    let magnitude = (POIDS_ROULANT + poids * (POIDS_ARRET - POIDS_ROULANT)) * gain;
+    // Allègement quand le train avant décolle (saut) : le volant change de dureté en l'air.
+    let magnitude = (POIDS_ROULANT + poids * (POIDS_ARRET - POIDS_ROULANT)) * gain * facteur_sol(t);
     borne_u16(magnitude)
+}
+
+/// Facteur « au sol » ([`PLANCHER_AERIEN`]..`1.0`) : `1` quand le train avant est posé,
+/// réduit jusqu'à [`PLANCHER_AERIEN`] quand la suspension avant est en pleine détente
+/// (saut). Allège le volant en l'air.
+fn facteur_sol(t: &Telemetrie) -> f32 {
+    let au_sol = (t.suspension_avant / SUSPENSION_SOL_MIN).clamp(0.0, 1.0);
+    PLANCHER_AERIEN + (1.0 - PLANCHER_AERIEN) * au_sol
+}
+
+/// Amplitude (`0`..[`COUPLE_MAX`]) de la **secousse** à appliquer en oscillation rapide :
+/// vibration de **rugosité de surface** + **impacts verticaux** (bosses, atterrissages).
+/// Le worker en alterne le signe pour faire vibrer le volant. `0` hors gameplay.
+#[must_use]
+pub fn secousse_depuis_telemetrie(t: &Telemetrie, reglages: &ReglagesForza) -> i32 {
+    if !t.course_active {
+        return 0;
+    }
+    let gain = f32::from(reglages.gain) / 100.0;
+    let rugosite = t.rumble_avant.clamp(0.0, 1.0);
+    let impact = (t.accel_vertical.abs() / ACCEL_SECOUSSE_PLEINE).clamp(0.0, 1.0);
+    let amplitude = (SECOUSSE_RUMBLE_MAX * rugosite + SECOUSSE_IMPACT_MAX * impact) * gain;
+    arrondir_borne(amplitude * COUPLE_MAX_F)
 }
 
 /// Borne un flottant à `0..=0xFFFF` et le convertit en `u16`.
@@ -113,7 +157,10 @@ fn borne_u16(valeur: f32) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{COUPLE_MAX, ReglagesForza, autocentre_depuis_vitesse, couple_depuis_telemetrie};
+    use super::{
+        COUPLE_MAX, ReglagesForza, autocentre_depuis_vitesse, couple_depuis_telemetrie,
+        secousse_depuis_telemetrie,
+    };
     use crate::telemetrie::Telemetrie;
 
     fn telem(course_active: bool, vitesse_m_s: f32, derive_avant: f32) -> Telemetrie {
@@ -122,6 +169,8 @@ mod tests {
             vitesse_m_s,
             derive_avant,
             rumble_avant: 0.0,
+            accel_vertical: 0.0,
+            suspension_avant: 1.0, // au sol (pas d'allègement aérien) par défaut.
         }
     }
 
@@ -178,6 +227,50 @@ mod tests {
         assert!(
             arret < u16::MAX && rapide > 0,
             "arret={arret} rapide={rapide}"
+        );
+    }
+
+    #[test]
+    fn secousse_depuis_rugosite_et_impact() {
+        let r = ReglagesForza::default();
+        let lisse = telem(true, 20.0, 0.0);
+        assert_eq!(secousse_depuis_telemetrie(&lisse, &r), 0, "route lisse → 0");
+        // Rugosité de surface → secousse.
+        let mut rugueux = lisse;
+        rugueux.rumble_avant = 1.0;
+        assert!(
+            secousse_depuis_telemetrie(&rugueux, &r) > 0,
+            "rugosité → secousse"
+        );
+        // Gros impact vertical (atterrissage) → secousse forte.
+        let mut impact = lisse;
+        impact.accel_vertical = 40.0;
+        assert!(
+            secousse_depuis_telemetrie(&impact, &r) > secousse_depuis_telemetrie(&rugueux, &r),
+            "un atterrissage secoue plus qu'une route rugueuse"
+        );
+        // Hors course : aucune secousse.
+        let mut hors = impact;
+        hors.course_active = false;
+        assert_eq!(secousse_depuis_telemetrie(&hors, &r), 0);
+    }
+
+    #[test]
+    fn en_l_air_le_volant_s_allege() {
+        let r = ReglagesForza::default();
+        let mut au_sol = telem(true, 20.0, 0.20);
+        au_sol.suspension_avant = 0.5; // posé
+        let mut en_l_air = au_sol;
+        en_l_air.suspension_avant = 0.0; // pleine détente (saut)
+        // Poids d'autocentrage et force de virage réduits en l'air.
+        assert!(
+            autocentre_depuis_vitesse(&en_l_air, &r) < autocentre_depuis_vitesse(&au_sol, &r),
+            "autocentrage plus léger en l'air"
+        );
+        assert!(
+            couple_depuis_telemetrie(&en_l_air, &r).abs()
+                < couple_depuis_telemetrie(&au_sol, &r).abs(),
+            "force de virage réduite en l'air"
         );
     }
 
