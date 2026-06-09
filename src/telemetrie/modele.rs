@@ -44,11 +44,11 @@ const BOSSE_MORTE: f32 = 0.010;
 /// Variation de débattement de suspension (|Δ| normalisé entre deux trames) donnant une
 /// secousse **pleine**. Plus la route est irrégulière (hors-piste, bosses), plus la
 /// suspension bouge entre deux trames → plus le volant tremble. À l'atterrissage, la
-/// compression soudaine sature → choc franc.
-const BOSSE_PLEINE: f32 = 0.060;
+/// compression soudaine sature → choc franc. Abaissé pour rendre le hors-piste plus franc.
+const BOSSE_PLEINE: f32 = 0.045;
 /// Amplitude max de la secousse de route (fraction de [`COUPLE_MAX`]) : volontairement
 /// **forte**, car un volant lourd amortit beaucoup la vibration.
-const SECOUSSE_ROUTE_MAX: f32 = 0.75;
+const SECOUSSE_ROUTE_MAX: f32 = 0.85;
 /// Débattement de suspension avant (normalisé) en deçà duquel le train avant est « en
 /// l'air » : sous ce seuil, le volant s'allège (saut) ; au-dessus, poids normal.
 const SUSPENSION_SOL_MIN: f32 = 0.12;
