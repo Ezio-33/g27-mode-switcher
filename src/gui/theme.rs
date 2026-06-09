@@ -135,24 +135,22 @@ fn install_style(ctx: &egui::Context) {
 
     style.visuals = visuals;
 
-    // Tailles relevées pour la lisibilité (accessibilité RGAA/WCAG) : corps ~16 px,
-    // texte secondaire ~14 px — confortable pour tous, sans fenêtre démesurée.
+    // Échelle confortable et lisible (accessibilité) sans fenêtre démesurée : corps/bouton
+    // 15 px, texte secondaire 14 px. Le débordement éventuel est géré par le défilement.
     style.text_styles.insert(
         TextStyle::Heading,
-        FontId::new(28.0, FontFamily::Name(CINZEL.into())),
+        FontId::new(24.0, FontFamily::Name(CINZEL.into())),
     );
     style
         .text_styles
-        .insert(TextStyle::Body, FontId::new(16.0, FontFamily::Proportional));
+        .insert(TextStyle::Body, FontId::new(15.0, FontFamily::Proportional));
     style.text_styles.insert(
         TextStyle::Button,
-        FontId::new(16.0, FontFamily::Proportional),
+        FontId::new(15.0, FontFamily::Proportional),
     );
-    // « Small » porté à 16 px (= corps) : baseline accessible, plus aucun texte secondaire
-    // sous cette taille. La hiérarchie passe par la couleur/graisse, pas par un texte minuscule.
     style.text_styles.insert(
         TextStyle::Small,
-        FontId::new(16.0, FontFamily::Proportional),
+        FontId::new(14.0, FontFamily::Proportional),
     );
 
     style.spacing.item_spacing = egui::vec2(10.0, 10.0);

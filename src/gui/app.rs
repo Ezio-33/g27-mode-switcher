@@ -576,8 +576,24 @@ impl eframe::App for App {
                 self.footer(ui);
             });
 
-        // Reste de la fenêtre : en-tête pleine largeur, cartes en retrait latéral
-        // (16px) pour se détacher, journal occupant la hauteur restante.
+        // Journal ancré en bas (au-dessus du pied de page), **redimensionnable** : ses
+        // lignes défilent en interne, et il ne mange pas la place des cartes défilables.
+        egui::Panel::bottom("journal")
+            .resizable(true)
+            .default_size(150.0)
+            .frame(egui::Frame::default().inner_margin(egui::Margin {
+                left: 16,
+                right: 16,
+                top: 6,
+                bottom: 8,
+            }))
+            .show_separator_line(true)
+            .show_inside(ui, |ui| {
+                self.card_journal(ui);
+            });
+
+        // Reste de la fenêtre : en-tête pleine largeur (toujours visible), puis cartes
+        // **défilables** en retrait latéral (16 px) pour se détacher.
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show_inside(ui, |ui| {
@@ -586,32 +602,35 @@ impl eframe::App for App {
                 ui.add_space(10.0);
                 ui.separator();
 
-                egui::Frame::NONE
-                    .inner_margin(egui::Margin {
-                        left: 16,
-                        right: 16,
-                        top: 12,
-                        bottom: 12,
-                    })
+                // Cartes défilables : si la fenêtre est trop petite, une barre de
+                // défilement apparaît au lieu de couper le contenu.
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        self.card_mode(ui);
-                        ui.add_space(12.0);
-                        self.card_angle(ui);
-                        ui.add_space(12.0);
-                        self.card_autocentrage(ui);
-                        ui.add_space(12.0);
-                        match self.config.mode_jeu {
-                            ModeJeu::General => {
-                                self.carte_pont.afficher(ui, &mut self.config, &self.log);
-                            }
-                            ModeJeu::Forza => {
-                                self.carte_forza.afficher(ui, &mut self.config, &self.log);
-                            }
-                        }
-                        ui.add_space(12.0);
-                        // Le journal remplit la hauteur restante du panneau central.
-                        self.card_journal(ui);
+                        egui::Frame::NONE
+                            .inner_margin(egui::Margin {
+                                left: 16,
+                                right: 16,
+                                top: 12,
+                                bottom: 12,
+                            })
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                self.card_mode(ui);
+                                ui.add_space(12.0);
+                                self.card_angle(ui);
+                                ui.add_space(12.0);
+                                self.card_autocentrage(ui);
+                                ui.add_space(12.0);
+                                match self.config.mode_jeu {
+                                    ModeJeu::General => {
+                                        self.carte_pont.afficher(ui, &mut self.config, &self.log);
+                                    }
+                                    ModeJeu::Forza => {
+                                        self.carte_forza.afficher(ui, &mut self.config, &self.log);
+                                    }
+                                }
+                            });
                     });
             });
 
