@@ -135,20 +135,22 @@ fn install_style(ctx: &egui::Context) {
 
     style.visuals = visuals;
 
+    // Tailles relevées pour la lisibilité (accessibilité RGAA/WCAG) : corps ~16 px,
+    // texte secondaire ~14 px — confortable pour tous, sans fenêtre démesurée.
     style.text_styles.insert(
         TextStyle::Heading,
-        FontId::new(26.0, FontFamily::Name(CINZEL.into())),
+        FontId::new(28.0, FontFamily::Name(CINZEL.into())),
     );
     style
         .text_styles
-        .insert(TextStyle::Body, FontId::new(14.0, FontFamily::Proportional));
+        .insert(TextStyle::Body, FontId::new(16.0, FontFamily::Proportional));
     style.text_styles.insert(
         TextStyle::Button,
-        FontId::new(14.0, FontFamily::Proportional),
+        FontId::new(16.0, FontFamily::Proportional),
     );
     style.text_styles.insert(
         TextStyle::Small,
-        FontId::new(12.0, FontFamily::Proportional),
+        FontId::new(14.0, FontFamily::Proportional),
     );
 
     style.spacing.item_spacing = egui::vec2(10.0, 10.0);

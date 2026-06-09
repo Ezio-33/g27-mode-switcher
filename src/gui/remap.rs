@@ -195,7 +195,7 @@ impl EditeurRemap {
         let en_capture = self.capture.is_some_and(|c| c.cible == cible);
         let bas = source.map_or_else(|| "—".to_owned(), |b| format!("G27 #{b}"));
         let texte = RichText::new(format!("vJoy #{cible}\n{bas}"))
-            .size(12.0)
+            .size(14.0)
             .color(if en_capture {
                 theme::BG_BASE
             } else {

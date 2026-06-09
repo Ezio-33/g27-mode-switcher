@@ -209,7 +209,7 @@ impl App {
                         ui.label(
                             RichText::new("Volant en mode natif G27 (C29B)")
                                 .color(theme::TEXT_MUTED)
-                                .size(13.0),
+                                .size(15.0),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let revert = egui::Button::new(
@@ -372,12 +372,9 @@ impl App {
                 about_clicked = true;
             }
             footer_sep(ui);
-            let conditions = egui::Button::new(
-                RichText::new("Conditions d'utilisation")
-                    .small()
-                    .color(theme::GOLD_DARK),
-            )
-            .frame(false);
+            let conditions =
+                egui::Button::new(RichText::new("Conditions").small().color(theme::GOLD_DARK))
+                    .frame(false);
             if ui.add(conditions).clicked() {
                 conditions_clicked = true;
             }
@@ -758,7 +755,7 @@ fn control_row(
     let mut toggle = None;
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
-            ui.label(RichText::new(title).size(14.0).color(theme::TEXT));
+            ui.label(RichText::new(title).size(16.0).color(theme::TEXT));
             ui.add_space(2.0);
             ui.label(RichText::new(subtitle).small().color(theme::TEXT_DIM));
         });
@@ -777,9 +774,11 @@ fn section_label(ui: &mut egui::Ui, text: &str) {
 /// Paragraphe des conditions d'utilisation : titre fort + texte atténué (avec retour
 /// à la ligne automatique dans la largeur de la fenêtre).
 fn conditions_paragraphe(ui: &mut egui::Ui, titre: &str, texte: &str) {
-    ui.add_space(6.0);
-    ui.label(RichText::new(titre).strong().color(theme::TEXT));
-    ui.label(RichText::new(texte).small().color(theme::TEXT_MUTED));
+    ui.add_space(10.0);
+    ui.label(RichText::new(titre).size(17.0).strong().color(theme::GOLD));
+    ui.add_space(2.0);
+    // Corps en taille normale (pas `small`) pour la lisibilité (texte légal).
+    ui.label(RichText::new(texte).color(theme::TEXT));
 }
 
 /// Lien de pied de page discret (or atténué).

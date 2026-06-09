@@ -215,7 +215,7 @@ impl CartePont {
     /// le receiver et la carte passe en état « Démarrage… » sans bloquer la GUI.
     fn afficher_pret(&mut self, ui: &mut egui::Ui, config: &mut Config, log: &LogBuffer) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Device vJoy").size(14.0).color(theme::TEXT));
+            ui.label(RichText::new("Device vJoy").size(16.0).color(theme::TEXT));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let mut id = config.pont.id_vjoy;
                 if ui
@@ -259,7 +259,7 @@ impl CartePont {
 /// (`0` = aucun). Renvoie la réponse du sélecteur (pour détecter un changement).
 fn champ_bouton_clavier(ui: &mut egui::Ui, libelle: &str, numero: &mut u8) -> egui::Response {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(libelle).size(12.0).color(theme::TEXT_MUTED));
+        ui.label(RichText::new(libelle).size(14.0).color(theme::TEXT_MUTED));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add(
                 egui::DragValue::new(numero)
@@ -289,7 +289,7 @@ fn controles_traductions(ui: &mut egui::Ui, config: &mut Config) -> bool {
         .checkbox(
             &mut chapeau,
             RichText::new("D-pad → flèches clavier")
-                .size(13.0)
+                .size(15.0)
                 .color(theme::TEXT),
         )
         .on_hover_text(
@@ -317,7 +317,7 @@ fn controles_traductions(ui: &mut egui::Ui, config: &mut Config) -> bool {
         .checkbox(
             &mut souris,
             RichText::new("D-pad → souris (map)")
-                .size(13.0)
+                .size(15.0)
                 .color(theme::TEXT),
         )
         .on_hover_text(
@@ -349,7 +349,7 @@ fn controles_options(
         .checkbox(
             &mut masquer,
             RichText::new("Masquer le G27 au jeu")
-                .size(13.0)
+                .size(15.0)
                 .color(theme::TEXT),
         )
         .on_hover_text(

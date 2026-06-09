@@ -112,11 +112,11 @@ pub fn render(ui: &mut egui::Ui, buffer: &LogBuffer) {
                 };
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    ui.label(RichText::new(prefix).monospace().size(11.0).color(color));
+                    ui.label(RichText::new(prefix).monospace().size(13.0).color(color));
                     ui.label(
                         RichText::new(line.text)
                             .monospace()
-                            .size(11.0)
+                            .size(13.0)
                             .color(theme::TEXT_MUTED),
                     );
                 });

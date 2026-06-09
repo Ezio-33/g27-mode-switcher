@@ -155,7 +155,7 @@ fn reglages_force(ui: &mut egui::Ui, config: &mut Config) -> bool {
     let mut change = false;
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Intensité").size(13.0).color(theme::TEXT));
+        ui.label(RichText::new("Intensité").size(15.0).color(theme::TEXT));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let curseur = egui::Slider::new(&mut config.forza.gain, 0..=100).suffix(" %");
             change |= ui.add(curseur).changed();
@@ -167,7 +167,7 @@ fn reglages_force(ui: &mut egui::Ui, config: &mut Config) -> bool {
         .checkbox(
             &mut inverser,
             RichText::new("Inverser le sens du couple")
-                .size(13.0)
+                .size(15.0)
                 .color(theme::TEXT),
         )
         .on_hover_text(
@@ -201,7 +201,7 @@ fn aide_configuration(ui: &mut egui::Ui, config: &mut Config) {
     }
     ui.add_space(2.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Port d'écoute").size(13.0).color(theme::TEXT));
+        ui.label(RichText::new("Port d'écoute").size(15.0).color(theme::TEXT));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add(egui::DragValue::new(&mut config.forza.port).range(1..=65535));
         });
