@@ -188,7 +188,7 @@ impl CartePont {
                  jusqu'à la fermeture de l'application.",
             )
             .small()
-            .color(theme::TEXT_DIM),
+            .color(theme::TEXT_MUTED),
         );
         controles_options(ui, config, self.pont.as_mut(), &mut self.editeur, log);
         ui.add_space(12.0);
@@ -407,7 +407,7 @@ fn afficher_demarrage(ui: &mut egui::Ui) {
     ui.label(
         RichText::new("Acquisition du device vJoy en cours.")
             .small()
-            .color(theme::TEXT_DIM),
+            .color(theme::TEXT_MUTED),
     );
 }
 
@@ -434,7 +434,7 @@ fn afficher_aide(ui: &mut egui::Ui, prerequis: &Prerequis) {
     ui.label(
         RichText::new("Installez les composants manquants (x64) ; l'état se met à jour tout seul.")
             .small()
-            .color(theme::TEXT_DIM),
+            .color(theme::TEXT_MUTED),
     );
 }
 

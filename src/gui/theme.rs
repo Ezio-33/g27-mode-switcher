@@ -150,7 +150,7 @@ fn install_style(ctx: &egui::Context) {
     );
     style.text_styles.insert(
         TextStyle::Small,
-        FontId::new(14.0, FontFamily::Proportional),
+        FontId::new(15.0, FontFamily::Proportional),
     );
 
     style.spacing.item_spacing = egui::vec2(10.0, 10.0);

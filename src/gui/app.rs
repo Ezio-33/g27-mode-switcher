@@ -236,7 +236,7 @@ impl App {
                 Status::Absent => {
                     ui.label(
                         RichText::new("Branchez un Logitech G27 pour commencer.")
-                            .color(theme::TEXT_DIM),
+                            .color(theme::TEXT_MUTED),
                     );
                 }
             }
@@ -756,7 +756,7 @@ fn control_row(
         ui.vertical(|ui| {
             ui.label(RichText::new(title).size(16.0).color(theme::TEXT));
             ui.add_space(2.0);
-            ui.label(RichText::new(subtitle).small().color(theme::TEXT_DIM));
+            ui.label(RichText::new(subtitle).small().color(theme::TEXT_MUTED));
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             toggle = Some(add_toggle(ui));

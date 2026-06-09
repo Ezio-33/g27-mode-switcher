@@ -68,7 +68,7 @@ impl CarteForza {
                     statut.derive_avant, statut.couple, statut.secousse, statut.paquets
                 ))
                 .small()
-                .color(theme::TEXT_DIM),
+                .color(theme::TEXT_MUTED),
             );
         }
         if reglages_force(ui, config)
@@ -198,7 +198,7 @@ fn aide_configuration(ui: &mut egui::Ui, config: &mut Config) {
         "2. IP de sortie des données : 127.0.0.1",
         "3. Port de sortie des données : identique au port ci-dessous.",
     ] {
-        ui.label(RichText::new(ligne).small().color(theme::TEXT_DIM));
+        ui.label(RichText::new(ligne).small().color(theme::TEXT_MUTED));
     }
     ui.add_space(2.0);
     ui.horizontal(|ui| {
@@ -210,7 +210,7 @@ fn aide_configuration(ui: &mut egui::Ui, config: &mut Config) {
     ui.label(
         RichText::new("4. Lancez une course, puis « Démarrer ».")
             .small()
-            .color(theme::TEXT_DIM),
+            .color(theme::TEXT_MUTED),
     );
 }
 
