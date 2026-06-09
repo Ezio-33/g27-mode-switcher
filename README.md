@@ -8,8 +8,8 @@ Bascule un volant **Logitech G27** de son mode dégradé par défaut vers son
 propriétaire** — donc **compatible avec HVCI / Memory Integrity** activé sur
 Windows 11.
 
-> **État : `v1.1.0` — application adaptative « LGS-like » complète, toujours sans pilote.**
-> Au-delà de la bascule en mode natif (axes, angle, autocentrage), la `v1.1.0` offre
+> **État : `v1.1.1` — application adaptative « LGS-like » complète, toujours sans pilote.**
+> Au-delà de la bascule en mode natif (axes, angle, autocentrage), l'application offre
 > **deux modes de jeu** sélectionnables dans un menu **« Jeux »** :
 >
 > - **Mode général** — c'est le mode « **passe-partout** » : l'outil crée une **manette
@@ -17,8 +17,9 @@ Windows 11.
 >   boutons, pédales), **cache le vrai G27 au jeu** (via HidHide) pour éviter qu'il
 >   apparaisse en double, puis **récupère le retour de force que le jeu envoie à la manette
 >   virtuelle et le rejoue sur le G27** (force constante + **autocentrage modulé par la
->   vitesse**). Avantage : ça marche avec **n'importe quel jeu**. Coût : il faut installer
->   **vJoy** + **HidHide** (deux petits pilotes signés, une fois).
+>   vitesse** + **vibrations** du jeu — trottoirs, collisions, rumble). Avantage : ça marche
+>   avec **n'importe quel jeu**. Coût : il faut installer **vJoy** + **HidHide** (deux petits
+>   pilotes signés, une fois).
 > - **Mode Forza** *(nouveau)* — **sans vJoy, sans HidHide, sans rien cacher** : le G27 reste
 >   reconnu nativement par le jeu (**navigation menus *et* carte intactes**) et le retour de
 >   force est **calculé à partir de la télémétrie « Data Out »** que Forza diffuse lui-même
