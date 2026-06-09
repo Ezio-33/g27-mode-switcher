@@ -234,6 +234,7 @@ impl CartePont {
             let options = pont::OptionsPont {
                 couper_autocentrage: config.pont.couper_autocentrage_ffb,
                 chapeau_clavier: config.pont.chapeau_vers_clavier,
+                chapeau_souris: config.pont.chapeau_vers_souris,
                 bouton_valider: config.pont.bouton_valider,
                 bouton_retour: config.pont.bouton_retour,
             };
@@ -277,9 +278,64 @@ fn champ_bouton_clavier(ui: &mut egui::Ui, libelle: &str, numero: &mut u8) -> eg
     .inner
 }
 
-/// Bloc de réglages du pont (masquage + traductions clavier), affiché dans tous les
-/// états. Si `pont` existe, les changements sont **appliqués à chaud** ; sinon ils ne
-/// font que mettre à jour la config (lue au prochain démarrage).
+/// Cases des traductions du D-pad (→ flèches clavier + boutons Entrée/Échap, → souris).
+/// Met à jour la config et renvoie `true` si un réglage clavier/souris a changé (pour
+/// déclencher une reconfiguration à chaud du pont).
+fn controles_traductions(ui: &mut egui::Ui, config: &mut Config) -> bool {
+    let mut change = false;
+    ui.add_space(6.0);
+    let mut chapeau = config.pont.chapeau_vers_clavier;
+    if ui
+        .checkbox(
+            &mut chapeau,
+            RichText::new("D-pad → flèches clavier")
+                .size(13.0)
+                .color(theme::TEXT),
+        )
+        .on_hover_text(
+            "Traduit la croix directionnelle en flèches ↑↓←→ du clavier (navigation des \
+             menus/map Forza quand le G27 est masqué). Frappes clavier globales.",
+        )
+        .changed()
+    {
+        config.pont.chapeau_vers_clavier = chapeau;
+        change = true;
+    }
+    if config.pont.chapeau_vers_clavier {
+        ui.add_space(4.0);
+        if champ_bouton_clavier(ui, "Valider → Entrée", &mut config.pont.bouton_valider).changed()
+        {
+            change = true;
+        }
+        if champ_bouton_clavier(ui, "Retour → Échap", &mut config.pont.bouton_retour).changed() {
+            change = true;
+        }
+    }
+    ui.add_space(6.0);
+    let mut souris = config.pont.chapeau_vers_souris;
+    if ui
+        .checkbox(
+            &mut souris,
+            RichText::new("D-pad → souris (map)")
+                .size(13.0)
+                .color(theme::TEXT),
+        )
+        .on_hover_text(
+            "Traduit la croix directionnelle en déplacements du curseur souris : la map de \
+             Forza se navigue à la souris, pas avec un device vJoy. Déplace le curseur \
+             système global. Cumulable avec « D-pad → flèches clavier ».",
+        )
+        .changed()
+    {
+        config.pont.chapeau_vers_souris = souris;
+        change = true;
+    }
+    change
+}
+
+/// Bloc de réglages du pont (masquage + traductions clavier/souris + remappage), affiché
+/// dans tous les états. Si `pont` existe, les changements sont **appliqués à chaud** ;
+/// sinon ils ne font que mettre à jour la config (lue au prochain démarrage).
 fn controles_options(
     ui: &mut egui::Ui,
     config: &mut Config,
@@ -311,38 +367,11 @@ fn controles_options(
         }
     }
 
-    ui.add_space(6.0);
-    let mut clavier_change = false;
-    let mut chapeau = config.pont.chapeau_vers_clavier;
-    if ui
-        .checkbox(
-            &mut chapeau,
-            RichText::new("D-pad → flèches clavier")
-                .size(13.0)
-                .color(theme::TEXT),
-        )
-        .on_hover_text(
-            "Traduit la croix directionnelle en flèches ↑↓←→ du clavier (navigation des \
-             menus/map Forza quand le G27 est masqué). Frappes clavier globales.",
-        )
-        .changed()
-    {
-        config.pont.chapeau_vers_clavier = chapeau;
-        clavier_change = true;
-    }
-    if config.pont.chapeau_vers_clavier {
-        ui.add_space(4.0);
-        if champ_bouton_clavier(ui, "Valider → Entrée", &mut config.pont.bouton_valider).changed()
-        {
-            clavier_change = true;
-        }
-        if champ_bouton_clavier(ui, "Retour → Échap", &mut config.pont.bouton_retour).changed() {
-            clavier_change = true;
-        }
-    }
+    let clavier_change = controles_traductions(ui, config);
     if clavier_change && let Some(pont) = pont_actif {
         pont.reconfigurer_clavier(pont::OptionsClavier {
             chapeau: config.pont.chapeau_vers_clavier,
+            souris: config.pont.chapeau_vers_souris,
             valider: config.pont.bouton_valider,
             retour: config.pont.bouton_retour,
         });

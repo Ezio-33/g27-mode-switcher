@@ -32,6 +32,7 @@ use crate::clavier::ClavierG27;
 use crate::entree::{ErreurLecture, LecteurG27, entrees_depuis_rapport};
 use crate::ffb::{MessageFfb, PiloteForce, RecepteurFfb, commande_stop_forces};
 use crate::report::{self, OutputReport};
+use crate::souris::SourisG27;
 use crate::vjoy::{ErreurVjoy, StatutVjd, Vjoy};
 
 /// Délai d'attente d'un rapport HID dans la boucle (ms) ; court pour la latence.
@@ -56,6 +57,9 @@ pub struct OptionsPont {
     /// Si `true`, traduit le D-pad en flèches clavier (navigation menus/map Forza,
     /// quand le G27 est masqué). Cf. [`crate::clavier`].
     pub chapeau_clavier: bool,
+    /// Si `true`, traduit le D-pad en **mouvements souris** (curseur de la map Forza,
+    /// que vJoy ne pilote pas). Cf. [`crate::souris`]. Cumulable avec `chapeau_clavier`.
+    pub chapeau_souris: bool,
     /// Bouton vJoy (1-indexé) déclenchant **Entrée** au clavier (`0` = aucun).
     pub bouton_valider: u8,
     /// Bouton vJoy (1-indexé) déclenchant **Échap** au clavier (`0` = aucun).
@@ -69,6 +73,8 @@ pub struct OptionsPont {
 pub struct OptionsClavier {
     /// Traduire le D-pad en flèches.
     pub chapeau: bool,
+    /// Traduire le D-pad en mouvements souris (curseur de la map Forza).
+    pub souris: bool,
     /// Bouton vJoy → Entrée (`0` = aucun).
     pub valider: u8,
     /// Bouton vJoy → Échap (`0` = aucun).
@@ -295,24 +301,56 @@ fn initialiser_clavier(partage: &Mutex<OptionsClavier>, options: OptionsPont) {
     if let Ok(mut verrou) = partage.lock() {
         *verrou = OptionsClavier {
             chapeau: options.chapeau_clavier,
+            souris: options.chapeau_souris,
             valider: options.bouton_valider,
             retour: options.bouton_retour,
         };
     }
 }
 
-/// Relit les réglages clavier partagés et **recrée** l'injecteur si ils ont changé
-/// depuis `config` (le `Drop` de l'ancien relâche les touches encore enfoncées).
+/// Relit les réglages partagés et **recrée** les injecteurs clavier et souris s'ils ont
+/// changé depuis `config` (le `Drop` du clavier relâche les touches encore enfoncées ;
+/// la souris est sans état).
 fn relire_clavier(
     partage: &Mutex<OptionsClavier>,
     clavier: &mut Option<ClavierG27>,
+    souris: &mut Option<SourisG27>,
     config: &mut OptionsClavier,
 ) {
     let courante = partage.lock().map_or(*config, |v| *v);
     if courante != *config {
         let injecteur = ClavierG27::new(courante.chapeau, courante.valider, courante.retour);
         *clavier = injecteur.utile().then_some(injecteur);
+        let souris_inj = SourisG27::new(courante.souris);
+        *souris = souris_inj.utile().then_some(souris_inj);
         *config = courante;
+    }
+}
+
+/// Recopie un rapport du G27 vers vJoy puis injecte les traductions clavier/souris :
+/// publie les boutons bruts (capture de l'éditeur de remappage), applique le remappage
+/// relu à chaud, met à jour le device vJoy, puis pousse les frappes clavier et le
+/// déplacement souris déduits du D-pad.
+fn recopier_et_injecter(
+    lecteur: &LecteurG27,
+    vjoy: &Vjoy,
+    id: u32,
+    partage: &Partage,
+    clavier: Option<&mut ClavierG27>,
+    souris: Option<&SourisG27>,
+) {
+    let entrees = entrees_depuis_rapport(lecteur.rapport());
+    partage
+        .boutons_bruts
+        .store(entrees.boutons.masque(), Ordering::Relaxed);
+    let remap = partage.remap.lock().map_or(REMAP_DEFAUT, |r| *r);
+    let mut position = position_depuis_entrees(&entrees, &remap);
+    let _ = vjoy.mettre_a_jour(id, &mut position);
+    if let Some(clavier) = clavier {
+        clavier.appliquer(entrees.chapeau, position.buttons.cast_unsigned());
+    }
+    if let Some(souris) = souris {
+        souris.appliquer(entrees.chapeau);
     }
 }
 
@@ -388,27 +426,28 @@ fn boucle_feeder(
     // depuis le verrou partagé : on recrée l'injecteur quand les réglages changent. Le
     // `Drop` (recréation ou fin de boucle) relâche toute touche encore enfoncée.
     let mut clavier: Option<ClavierG27> = None;
+    let mut souris: Option<SourisG27> = None;
     let mut clavier_config = OptionsClavier::default();
     while !arret.load(Ordering::Relaxed) {
         if !actif.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(DELAI_PAUSE_MS));
             continue;
         }
-        relire_clavier(&partage.clavier, &mut clavier, &mut clavier_config);
+        relire_clavier(
+            &partage.clavier,
+            &mut clavier,
+            &mut souris,
+            &mut clavier_config,
+        );
         match lecteur.lire(DELAI_LECTURE_MS) {
-            Ok(true) => {
-                let entrees = entrees_depuis_rapport(lecteur.rapport());
-                // Boutons bruts exposés pour la capture de l'éditeur de remappage.
-                partage
-                    .boutons_bruts
-                    .store(entrees.boutons.masque(), Ordering::Relaxed);
-                let remap = partage.remap.lock().map_or(REMAP_DEFAUT, |r| *r);
-                let mut position = position_depuis_entrees(&entrees, &remap);
-                let _ = vjoy.mettre_a_jour(id, &mut position);
-                if let Some(clavier) = clavier.as_mut() {
-                    clavier.appliquer(entrees.chapeau, position.buttons.cast_unsigned());
-                }
-            }
+            Ok(true) => recopier_et_injecter(
+                &lecteur,
+                vjoy,
+                id,
+                partage,
+                clavier.as_mut(),
+                souris.as_ref(),
+            ),
             Ok(false) => {}
             // Volant débranché ou erreur HID : on met l'alimentation en pause (le
             // device vJoy reste acquis, relâché seulement au Drop). Reprise via

@@ -125,6 +125,9 @@ pub struct Journalisation {
 }
 
 /// Réglages du pont vJoy (section `[pont]`).
+// Plusieurs bascules indépendantes (masquage, autocentrage, D-pad→clavier/souris) :
+// des `bool` distincts sont ici plus lisibles qu'un type bitflags artificiel.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Pont {
@@ -143,6 +146,11 @@ pub struct Pont {
     /// qu'au clavier ou avec un volant reconnu, pas avec un device vJoy générique.
     /// Effet de bord : frappes clavier globales (fenêtre au premier plan).
     pub chapeau_vers_clavier: bool,
+    /// Traduire le D-pad du G27 en **mouvements souris** pendant le pont. La map de Forza
+    /// (PC) déplace son curseur à la souris (pas avec un device vJoy) : c'est le moyen,
+    /// sans logiciel en plus, de la naviguer quand le G27 est masqué. Cumulable avec
+    /// `chapeau_vers_clavier`. Effet de bord : déplace le curseur **système** global.
+    pub chapeau_vers_souris: bool,
     /// Bouton **vJoy** (1-indexé) qui envoie **Entrée** au clavier pour valider dans les
     /// menus (`0` = aucun). Complète `chapeau_vers_clavier` (qui ne fait que naviguer).
     pub bouton_valider: u8,
@@ -166,6 +174,7 @@ impl Default for Pont {
             masquer_g27_au_demarrage: true,
             couper_autocentrage_ffb: false,
             chapeau_vers_clavier: false,
+            chapeau_vers_souris: false,
             bouton_valider: 0,
             bouton_retour: 0,
             remap_boutons: remap_defaut_liste(),

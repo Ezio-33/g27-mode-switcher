@@ -7,7 +7,7 @@
 use super::{ANGLE_MAX, ANGLE_MIN, Config, ID_VJOY_MAX, ID_VJOY_MIN, VERBOSITES};
 
 /// Clés modifiables via `config set` / lisibles via `config get`.
-pub const CLES_MODIFIABLES: [&str; 11] = [
+pub const CLES_MODIFIABLES: [&str; 12] = [
     "angle_par_defaut",
     "appliquer_angle_au_switch",
     "desactiver_autocentrage_au_switch",
@@ -17,6 +17,7 @@ pub const CLES_MODIFIABLES: [&str; 11] = [
     "masquer_g27_au_demarrage",
     "couper_autocentrage_ffb",
     "chapeau_vers_clavier",
+    "chapeau_vers_souris",
     "bouton_valider",
     "bouton_retour",
 ];
@@ -26,7 +27,7 @@ pub const CLES_MODIFIABLES: [&str; 11] = [
 pub enum ErreurCle {
     /// La clé demandée n'existe pas.
     #[error(
-        "clé inconnue : « {0} ». Clés valides : angle_par_defaut, appliquer_angle_au_switch, desactiver_autocentrage_au_switch, mode_souhaite, verbosite, id_vjoy, masquer_g27_au_demarrage, couper_autocentrage_ffb, chapeau_vers_clavier, bouton_valider, bouton_retour"
+        "clé inconnue : « {0} ». Clés valides : angle_par_defaut, appliquer_angle_au_switch, desactiver_autocentrage_au_switch, mode_souhaite, verbosite, id_vjoy, masquer_g27_au_demarrage, couper_autocentrage_ffb, chapeau_vers_clavier, chapeau_vers_souris, bouton_valider, bouton_retour"
     )]
     Inconnue(String),
     /// La valeur fournie n'est pas valide pour cette clé.
@@ -58,6 +59,7 @@ impl Config {
             "masquer_g27_au_demarrage" => Ok(self.pont.masquer_g27_au_demarrage.to_string()),
             "couper_autocentrage_ffb" => Ok(self.pont.couper_autocentrage_ffb.to_string()),
             "chapeau_vers_clavier" => Ok(self.pont.chapeau_vers_clavier.to_string()),
+            "chapeau_vers_souris" => Ok(self.pont.chapeau_vers_souris.to_string()),
             "bouton_valider" => Ok(self.pont.bouton_valider.to_string()),
             "bouton_retour" => Ok(self.pont.bouton_retour.to_string()),
             _ => Err(ErreurCle::Inconnue(cle.to_owned())),
@@ -112,6 +114,9 @@ impl Config {
             }
             "chapeau_vers_clavier" => {
                 self.pont.chapeau_vers_clavier = parse_bool(cle, valeur)?;
+            }
+            "chapeau_vers_souris" => {
+                self.pont.chapeau_vers_souris = parse_bool(cle, valeur)?;
             }
             "bouton_valider" => {
                 self.pont.bouton_valider = parse_bouton(cle, valeur)?;

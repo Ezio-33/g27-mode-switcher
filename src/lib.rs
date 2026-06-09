@@ -22,5 +22,6 @@ pub mod keymapper;
 pub mod pont;
 pub mod range;
 pub mod report;
+pub mod souris;
 pub mod switcher;
 pub mod vjoy;
