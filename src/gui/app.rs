@@ -385,14 +385,18 @@ impl App {
     /// Barre de menus supérieure : menu « Jeux » (choix du mode) + libellé du mode actif.
     fn menu_jeux(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button(RichText::new("Jeux").color(theme::TEXT), |ui| {
-                self.choix_mode(ui, ModeJeu::General, "Général — pont vJoy (tous jeux)");
-                self.choix_mode(ui, ModeJeu::Forza, "Forza Horizon — télémétrie");
-            });
+            ui.menu_button(
+                RichText::new("Jeux").size(16.0).strong().color(theme::TEXT),
+                |ui| {
+                    self.choix_mode(ui, ModeJeu::General, "Général — pont vJoy (tous jeux)");
+                    self.choix_mode(ui, ModeJeu::Forza, "Forza Horizon — télémétrie");
+                },
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     RichText::new(libelle_mode(self.config.mode_jeu))
-                        .small()
+                        .size(15.0)
+                        .strong()
                         .color(theme::GOLD_DARK),
                 );
             });
