@@ -13,21 +13,21 @@ const COUPLE_MAX: i32 = 10000;
 /// Idem en flottant (10000 est exact en `f32`, pas de perte).
 const COUPLE_MAX_F: f32 = 10_000.0;
 
-/// Angle de dérive avant (radians) saturant la force de virage au gain plein (~17°). Plus
-/// haut = montée plus **progressive** (évite que le couple sature en permanence et donne
-/// une sensation de ressort rigide qui ramène sans cesse au centre).
-const DERIVE_PLEINE_RAD: f32 = 0.30;
+/// Angle de dérive avant (radians) saturant la force de virage au gain plein (~23°, slip
+/// élevé rarement atteint). Combiné à la courbe progressive, la force monte **doucement**
+/// en virage normal et ne devient ferme qu'à forte dérive.
+const DERIVE_PLEINE_RAD: f32 = 0.40;
 /// Vitesse (m/s ≈ 29 km/h) à partir de laquelle la force de virage (dérive) atteint son
 /// plein facteur. En deçà, elle est réduite linéairement.
 const VITESSE_PLEINE_M_S: f32 = 8.0;
 
 /// Poids d'autocentrage matériel **à l'arrêt** (sur `0xFFFF`) : la « friction de parking »
-/// — les pneus frottent sur place, le volant est **lourd**. Modéré (bien en deçà du plein
-/// `0xFFFF`, jugé trop rigide).
-const POIDS_ARRET: f32 = 20_000.0;
+/// — les pneus frottent sur place, le volant est **lourd**. ~73 % du max (le plein `0xFFFF`
+/// est jugé trop rigide, mais un poids net est attendu à l'arrêt).
+const POIDS_ARRET: f32 = 48_000.0;
 /// Poids d'autocentrage matériel **en roulant** (sur `0xFFFF`) : les pneus roulent, la
-/// friction chute, le volant **s'allège**.
-const POIDS_ROULANT: f32 = 5_000.0;
+/// friction chute, le volant **s'allège** nettement.
+const POIDS_ROULANT: f32 = 9_000.0;
 /// Vitesse (m/s ≈ 43 km/h) au-delà de laquelle l'allègement est complet : le volant passe
 /// **progressivement** de lourd (arrêt) à léger (en roulant), comme une vraie direction.
 const VITESSE_ALLEGEMENT_M_S: f32 = 12.0;
@@ -61,8 +61,11 @@ pub fn couple_depuis_telemetrie(t: &Telemetrie, reglages: &ReglagesForza) -> i32
     let gain = f32::from(reglages.gain) / 100.0;
     // Couple d'auto-alignement : s'oppose à la dérive (signe négatif) → ramène au centre.
     let derive = (t.derive_avant / DERIVE_PLEINE_RAD).clamp(-1.0, 1.0);
+    // Courbe progressive (carré signé) : douce près du centre, ferme seulement à forte
+    // dérive — évite un couple « trop prononcé » dès le moindre virage.
+    let progressif = derive * derive.abs();
     let facteur_vitesse = (t.vitesse_m_s / VITESSE_PLEINE_M_S).clamp(0.0, 1.0);
-    let mut couple = -derive * facteur_vitesse * gain;
+    let mut couple = -progressif * facteur_vitesse * gain;
     if reglages.inverser {
         couple = -couple;
     }
@@ -136,7 +139,8 @@ mod tests {
             gain: 100,
             inverser: false,
         };
-        let couple = couple_depuis_telemetrie(&telem(true, 20.0, 0.30), &r);
+        // À pleine dérive (= DERIVE_PLEINE_RAD) et pleine vitesse, le couple sature.
+        let couple = couple_depuis_telemetrie(&telem(true, 20.0, 0.40), &r);
         assert_eq!(couple, -COUPLE_MAX, "saturation au rappel, couple={couple}");
     }
 
