@@ -33,6 +33,9 @@ const RANGE_PRESETS: [(&str, u16); 4] = [
 ];
 
 /// État de l'interface graphique.
+// Plusieurs drapeaux d'UI indépendants (fenêtres ouvertes, états de session) : des
+// `bool` distincts sont plus lisibles qu'un type bitflags artificiel.
+#[allow(clippy::struct_excessive_bools)]
 pub struct App {
     session: DeviceSession,
     log: LogBuffer,
@@ -40,6 +43,7 @@ pub struct App {
     range_deg: u16,
     autocenter_disabled: bool,
     about_open: bool,
+    conditions_open: bool,
     config: Config,
     carte_pont: CartePont,
     carte_forza: CarteForza,
@@ -59,6 +63,7 @@ impl App {
             range_deg: config.volant.angle_par_defaut,
             autocenter_disabled: config.volant.desactiver_autocentrage_au_switch,
             about_open: false,
+            conditions_open: false,
             config,
             carte_pont: CartePont::new(),
             carte_forza: CarteForza::new(),
@@ -351,6 +356,7 @@ impl App {
     /// par le séparateur du `TopBottomPanel`).
     fn footer(&mut self, ui: &mut egui::Ui) {
         let mut about_clicked = false;
+        let mut conditions_clicked = false;
         centered_row(ui, "liens_pied", |ui| {
             ui.spacing_mut().item_spacing.x = 12.0;
             footer_link(ui, "Site", URL_SITE);
@@ -365,9 +371,22 @@ impl App {
             if ui.add(about).clicked() {
                 about_clicked = true;
             }
+            footer_sep(ui);
+            let conditions = egui::Button::new(
+                RichText::new("Conditions d'utilisation")
+                    .small()
+                    .color(theme::GOLD_DARK),
+            )
+            .frame(false);
+            if ui.add(conditions).clicked() {
+                conditions_clicked = true;
+            }
         });
         if about_clicked {
             self.about_open = true;
+        }
+        if conditions_clicked {
+            self.conditions_open = true;
         }
     }
 
@@ -452,6 +471,66 @@ impl App {
                 );
             });
         self.about_open = open;
+    }
+
+    /// Fenêtre « Conditions d'utilisation » (licence, attribution, garantie, responsabilité).
+    fn conditions_window(&mut self, ctx: &egui::Context) {
+        if !self.conditions_open {
+            return;
+        }
+        let mut open = self.conditions_open;
+        let frame = egui::Frame::window(&ctx.global_style())
+            .fill(theme::BG_CARD)
+            .stroke(Stroke::new(1.0, theme::BORDER_STRONG))
+            .inner_margin(egui::Margin::same(16));
+        egui::Window::new(
+            RichText::new("Conditions d'utilisation")
+                .color(theme::GOLD)
+                .strong(),
+        )
+        .collapsible(false)
+        .resizable(false)
+        .frame(frame)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .default_width(440.0)
+        .show(ctx, |ui| {
+            ui.set_max_width(440.0);
+            conditions_paragraphe(
+                ui,
+                "Licence",
+                "G27 Mode Switcher est un logiciel libre publié sous licence MIT.",
+            );
+            conditions_paragraphe(
+                ui,
+                "Attribution obligatoire",
+                &format!(
+                    "Toute réutilisation, modification ou redistribution du code — total ou \
+                     partiel — doit créditer l'auteur ({AUTHOR}) et mentionner son site."
+                ),
+            );
+            conditions_paragraphe(
+                ui,
+                "Aucune garantie",
+                "Le logiciel est fourni « EN L'ÉTAT », sans aucune garantie, expresse ou \
+                 implicite (qualité marchande, adéquation à un usage particulier, absence de \
+                 défaut ou d'interruption).",
+            );
+            conditions_paragraphe(
+                ui,
+                "Limitation de responsabilité",
+                "L'utilisation se fait à vos propres risques. L'auteur ne peut en aucun cas \
+                 être tenu responsable d'un quelconque dommage direct ou indirect, \
+                 dysfonctionnement, perte de données ou problème matériel résultant de \
+                 l'utilisation du logiciel.",
+            );
+            ui.add_space(10.0);
+            ui.hyperlink_to(
+                RichText::new("Site — la Confrérie des Ombres").color(theme::GOLD),
+                URL_SITE,
+            );
+        });
+        self.conditions_open = open;
     }
 }
 
@@ -539,6 +618,7 @@ impl eframe::App for App {
             });
 
         self.about_window(ui.ctx());
+        self.conditions_window(ui.ctx());
     }
 }
 
@@ -692,6 +772,14 @@ fn control_row(
 /// Petit label de section (majuscules, atténué).
 fn section_label(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).small().strong().color(theme::TEXT_DIM));
+}
+
+/// Paragraphe des conditions d'utilisation : titre fort + texte atténué (avec retour
+/// à la ligne automatique dans la largeur de la fenêtre).
+fn conditions_paragraphe(ui: &mut egui::Ui, titre: &str, texte: &str) {
+    ui.add_space(6.0);
+    ui.label(RichText::new(titre).strong().color(theme::TEXT));
+    ui.label(RichText::new(texte).small().color(theme::TEXT_MUTED));
 }
 
 /// Lien de pied de page discret (or atténué).
