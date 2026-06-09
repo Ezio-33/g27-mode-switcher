@@ -39,6 +39,12 @@ impl CarteForza {
         theme::card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
             etiquette_section(ui, "RETOUR DE FORCE FORZA (TÉLÉMÉTRIE)");
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new("Aucun prérequis — ni vJoy ni HidHide, tout passe par le jeu.")
+                    .small()
+                    .color(theme::SUCCESS),
+            );
             ui.add_space(10.0);
             if self.pont.is_some() {
                 self.afficher_actif(ui, config, log);

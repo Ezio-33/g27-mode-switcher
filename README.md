@@ -140,8 +140,18 @@ peut être coupé explicitement avec `--disable-autocenter` (ou
 - **Windows 11** (l'outil cible cette plateforme ; HVCI peut rester activé) —
   fonctionne aussi sous Windows 10.
 - Un **volant Logitech G27** branché en USB.
-- **Rien d'autre** : aucun pilote, aucun utilitaire tiers, aucun droit
-  administrateur.
+- **Rien d'autre** pour la bascule de mode, l'angle, l'autocentrage et le **mode Forza**.
+
+**Dépendances selon le mode de jeu** (menu « Jeux ») :
+
+| Mode | Ce qu'il faut en plus | Pour quels jeux |
+| --- | --- | --- |
+| **Forza** | **Rien** — la télémétrie « Data Out » est intégrée au jeu | Forza Horizon |
+| **Général** | **vJoy** + **HidHide** (pilotes signés WHQL, HVCI-safe, installés une fois) | Tous les jeux |
+
+Le **mode Forza** ne demande donc **aucune installation** : il n'affiche jamais d'alerte
+vJoy/HidHide. Ces deux composants ne sont requis (et détectés au lancement) **que** pour
+le mode général. Aucun **droit administrateur** n'est nécessaire pour l'outil lui-même.
 
 > 🐧 Sous **Linux**, l'outil fonctionne aussi (backend `hidraw`). L'accès au
 > périphérique peut nécessiter une petite **règle udev** — voir
