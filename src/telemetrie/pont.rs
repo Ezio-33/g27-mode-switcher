@@ -292,7 +292,7 @@ fn boucle_reception(
     let mut couple = 0;
     let mut secousse = 0;
     let mut magnitude = 0u16;
-    let mut phase = false;
+    let mut compteur: u32 = 0;
     let mut prochain_autocentre = Instant::now();
     while !arret.load(Ordering::Relaxed) {
         match socket.recv(&mut tampon) {
@@ -315,11 +315,15 @@ fn boucle_reception(
             }
             Err(_) => {}
         }
-        // Force constante + secousse alternée à chaque tour (~125 Hz) : l'alternance de
-        // signe fait vibrer le volant (rugosité de route, bosses, atterrissages). Watchdog
-        // du G27 satisfait par cette réémission systématique.
-        phase = !phase;
-        let signe = if phase { 1 } else { -1 };
+        // Force constante + secousse, dont le signe s'inverse toutes les 2 itérations
+        // (~30 Hz) : un **tremblement** franc (route, bosses, atterrissages) plutôt qu'un
+        // buzz aigu (~125 Hz) que le poids du volant amortit. Réémis à chaque tour (watchdog).
+        compteur = compteur.wrapping_add(1);
+        let signe = if (compteur / 2).is_multiple_of(2) {
+            1
+        } else {
+            -1
+        };
         garde.appliquer_couple(couple + signe * secousse);
         // Autocentrage modulé réémis périodiquement (suit la vitesse, sans saturer le bus).
         if Instant::now() >= prochain_autocentre {

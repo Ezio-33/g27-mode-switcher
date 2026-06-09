@@ -41,8 +41,9 @@ const VITESSE_ALLEGEMENT_M_S: f32 = 18.0;
 /// Accélération verticale (m/s²) donnant une secousse **pleine** (gros impact / atterrissage).
 const ACCEL_SECOUSSE_PLEINE: f32 = 30.0;
 /// Part max de la secousse due à la **rugosité de surface** (fraction de [`COUPLE_MAX`]) :
-/// vibration continue sur route abîmée, trottoirs, hors-piste.
-const SECOUSSE_RUMBLE_MAX: f32 = 0.30;
+/// vibration continue sur route abîmée, trottoirs, hors-piste. Relevée pour un tremblement
+/// franc en tout-terrain (un volant lourd amortit beaucoup la vibration).
+const SECOUSSE_RUMBLE_MAX: f32 = 0.60;
 /// Part max de la secousse due aux **impacts verticaux** (fraction de [`COUPLE_MAX`]) :
 /// bosses et surtout **atterrissages** (pic d'accélération verticale).
 const SECOUSSE_IMPACT_MAX: f32 = 0.65;
