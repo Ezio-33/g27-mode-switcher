@@ -25,7 +25,7 @@ use crate::report;
 
 use super::{
     ReglagesForza, Telemetrie, analyser, autocentre_depuis_vitesse, couple_depuis_telemetrie,
-    secousse_depuis_telemetrie,
+    secousse_depuis_bosse,
 };
 
 /// Délai d'attente d'un paquet UDP par tour de boucle (ms) : court → ~125 Hz de
@@ -75,17 +75,20 @@ struct EtatPartage {
     derive_milli: AtomicI32,
     /// Dernier couple appliqué au volant.
     couple: AtomicI32,
+    /// Dernière amplitude de secousse (route/bosses) pour l'affichage.
+    secousse: AtomicI32,
 }
 
 impl EtatPartage {
-    /// Met à jour l'état depuis une télémétrie fraîche et le couple appliqué.
-    fn maj(&self, t: &Telemetrie, couple: i32) {
+    /// Met à jour l'état depuis une télémétrie fraîche, le couple et la secousse appliqués.
+    fn maj(&self, t: &Telemetrie, couple: i32, secousse: i32) {
         self.paquets.fetch_add(1, Ordering::Relaxed);
         self.course_active.store(t.course_active, Ordering::Relaxed);
         self.reception.store(true, Ordering::Relaxed);
         self.derive_milli
             .store(milli(t.derive_avant), Ordering::Relaxed);
         self.couple.store(couple, Ordering::Relaxed);
+        self.secousse.store(secousse, Ordering::Relaxed);
     }
 
     /// Marque la perte du flux (force remise au neutre).
@@ -93,6 +96,7 @@ impl EtatPartage {
         self.reception.store(false, Ordering::Relaxed);
         self.course_active.store(false, Ordering::Relaxed);
         self.couple.store(0, Ordering::Relaxed);
+        self.secousse.store(0, Ordering::Relaxed);
     }
 
     /// Instantané pour l'interface.
@@ -103,6 +107,7 @@ impl EtatPartage {
             reception: self.reception.load(Ordering::Relaxed),
             derive_avant: rad_depuis_milli(self.derive_milli.load(Ordering::Relaxed)),
             couple: self.couple.load(Ordering::Relaxed),
+            secousse: self.secousse.load(Ordering::Relaxed),
         }
     }
 }
@@ -120,6 +125,8 @@ pub struct StatutTelemetrie {
     pub derive_avant: f32,
     /// Dernier couple appliqué (−10000..10000).
     pub couple: i32,
+    /// Dernière amplitude de secousse (route/bosses, 0..10000).
+    pub secousse: i32,
 }
 
 /// Pont Forza actif : un worker synthétise le retour de force depuis la télémétrie.
@@ -293,6 +300,9 @@ fn boucle_reception(
     let mut secousse = 0;
     let mut magnitude = 0u16;
     let mut compteur: u32 = 0;
+    // Débattement de suspension avant de la trame précédente : la **variation** entre deux
+    // trames est la source physique des secousses (route, bosses, atterrissages).
+    let mut suspension_prec: Option<f32> = None;
     let mut prochain_autocentre = Instant::now();
     while !arret.load(Ordering::Relaxed) {
         match socket.recv(&mut tampon) {
@@ -301,9 +311,15 @@ fn boucle_reception(
                     dernier_paquet = Instant::now();
                     let r = reglages.lock().map(|g| *g).unwrap_or_default();
                     couple = couple_depuis_telemetrie(&t, &r);
-                    secousse = secousse_depuis_telemetrie(&t, &r);
                     magnitude = autocentre_depuis_vitesse(&t, &r);
-                    etat.maj(&t, couple);
+                    secousse = if t.course_active {
+                        let bosse = suspension_prec.map_or(0.0, |p| t.suspension_avant - p);
+                        secousse_depuis_bosse(bosse, &r)
+                    } else {
+                        0
+                    };
+                    suspension_prec = t.course_active.then_some(t.suspension_avant);
+                    etat.maj(&t, couple, secousse);
                 }
             }
             // Timeout (pas de paquet ce tour) : on relâche tout si le flux est tari.
@@ -311,6 +327,7 @@ fn boucle_reception(
                 couple = 0;
                 secousse = 0;
                 magnitude = 0;
+                suspension_prec = None;
                 etat.perte();
             }
             Err(_) => {}

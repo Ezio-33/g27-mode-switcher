@@ -17,7 +17,7 @@ mod modele;
 mod pont;
 
 pub use modele::{
-    ReglagesForza, autocentre_depuis_vitesse, couple_depuis_telemetrie, secousse_depuis_telemetrie,
+    ReglagesForza, autocentre_depuis_vitesse, couple_depuis_telemetrie, secousse_depuis_bosse,
 };
 pub use pont::{ErreurTelemetrie, PontTelemetrie, StatutTelemetrie};
 

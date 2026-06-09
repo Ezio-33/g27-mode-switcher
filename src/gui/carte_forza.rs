@@ -63,8 +63,8 @@ impl CarteForza {
             ui.add_space(4.0);
             ui.label(
                 RichText::new(format!(
-                    "Dérive avant : {:+.3} rad · couple : {:+} · paquets : {}",
-                    statut.derive_avant, statut.couple, statut.paquets
+                    "Dérive : {:+.3} rad · couple : {:+} · secousse : {} · paquets : {}",
+                    statut.derive_avant, statut.couple, statut.secousse, statut.paquets
                 ))
                 .small()
                 .color(theme::TEXT_DIM),

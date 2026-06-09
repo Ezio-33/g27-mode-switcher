@@ -38,15 +38,17 @@ const POIDS_ROULANT: f32 = 25_000.0;
 /// vraie direction. Au-delà, il reste au poids léger (`POIDS_ROULANT`).
 const VITESSE_ALLEGEMENT_M_S: f32 = 18.0;
 
-/// Accélération verticale (m/s²) donnant une secousse **pleine** (gros impact / atterrissage).
-const ACCEL_SECOUSSE_PLEINE: f32 = 30.0;
-/// Part max de la secousse due à la **rugosité de surface** (fraction de [`COUPLE_MAX`]) :
-/// vibration continue sur route abîmée, trottoirs, hors-piste. Relevée pour un tremblement
-/// franc en tout-terrain (un volant lourd amortit beaucoup la vibration).
-const SECOUSSE_RUMBLE_MAX: f32 = 0.60;
-/// Part max de la secousse due aux **impacts verticaux** (fraction de [`COUPLE_MAX`]) :
-/// bosses et surtout **atterrissages** (pic d'accélération verticale).
-const SECOUSSE_IMPACT_MAX: f32 = 0.65;
+/// Zone morte sur la variation de débattement (|Δ| normalisé entre deux trames) : en
+/// deçà, **aucune secousse** — la route lisse reste silencieuse (pas de « massage »).
+const BOSSE_MORTE: f32 = 0.010;
+/// Variation de débattement de suspension (|Δ| normalisé entre deux trames) donnant une
+/// secousse **pleine**. Plus la route est irrégulière (hors-piste, bosses), plus la
+/// suspension bouge entre deux trames → plus le volant tremble. À l'atterrissage, la
+/// compression soudaine sature → choc franc.
+const BOSSE_PLEINE: f32 = 0.060;
+/// Amplitude max de la secousse de route (fraction de [`COUPLE_MAX`]) : volontairement
+/// **forte**, car un volant lourd amortit beaucoup la vibration.
+const SECOUSSE_ROUTE_MAX: f32 = 0.75;
 /// Débattement de suspension avant (normalisé) en deçà duquel le train avant est « en
 /// l'air » : sous ce seuil, le volant s'allège (saut) ; au-dessus, poids normal.
 const SUSPENSION_SOL_MIN: f32 = 0.12;
@@ -131,19 +133,17 @@ fn facteur_sol(t: &Telemetrie) -> f32 {
     PLANCHER_AERIEN + (1.0 - PLANCHER_AERIEN) * au_sol
 }
 
-/// Amplitude (`0`..[`COUPLE_MAX`]) de la **secousse** à appliquer en oscillation rapide :
-/// vibration de **rugosité de surface** + **impacts verticaux** (bosses, atterrissages).
-/// Le worker en alterne le signe pour faire vibrer le volant. `0` hors gameplay.
+/// Amplitude (`0`..[`COUPLE_MAX`]) de la **secousse de route** pour une variation de
+/// débattement de suspension avant `bosse` (|Δ| **normalisé entre deux trames**, calculé
+/// par le worker). C'est la source physique des vibrations : sur route lisse la suspension
+/// bouge peu (sous [`BOSSE_MORTE`] → silence) ; en tout-terrain elle oscille fort
+/// (tremblement) ; à l'atterrissage elle se comprime brutalement ([`BOSSE_PLEINE`] → choc).
+/// Le worker en alterne le signe pour faire trembler le volant. Modulé par le `gain`.
 #[must_use]
-pub fn secousse_depuis_telemetrie(t: &Telemetrie, reglages: &ReglagesForza) -> i32 {
-    if !t.course_active {
-        return 0;
-    }
+pub fn secousse_depuis_bosse(bosse: f32, reglages: &ReglagesForza) -> i32 {
     let gain = f32::from(reglages.gain) / 100.0;
-    let rugosite = t.rumble_avant.clamp(0.0, 1.0);
-    let impact = (t.accel_vertical.abs() / ACCEL_SECOUSSE_PLEINE).clamp(0.0, 1.0);
-    let amplitude = (SECOUSSE_RUMBLE_MAX * rugosite + SECOUSSE_IMPACT_MAX * impact) * gain;
-    arrondir_borne(amplitude * COUPLE_MAX_F)
+    let intensite = ((bosse.abs() - BOSSE_MORTE) / (BOSSE_PLEINE - BOSSE_MORTE)).clamp(0.0, 1.0);
+    arrondir_borne(intensite * SECOUSSE_ROUTE_MAX * gain * COUPLE_MAX_F)
 }
 
 /// Borne un flottant à `0..=0xFFFF` et le convertit en `u16`.
@@ -160,7 +160,7 @@ fn borne_u16(valeur: f32) -> u16 {
 mod tests {
     use super::{
         COUPLE_MAX, ReglagesForza, autocentre_depuis_vitesse, couple_depuis_telemetrie,
-        secousse_depuis_telemetrie,
+        secousse_depuis_bosse,
     };
     use crate::telemetrie::Telemetrie;
 
@@ -232,28 +232,18 @@ mod tests {
     }
 
     #[test]
-    fn secousse_depuis_rugosite_et_impact() {
+    fn secousse_depuis_variation_de_suspension() {
         let r = ReglagesForza::default();
-        let lisse = telem(true, 20.0, 0.0);
-        assert_eq!(secousse_depuis_telemetrie(&lisse, &r), 0, "route lisse → 0");
-        // Rugosité de surface → secousse.
-        let mut rugueux = lisse;
-        rugueux.rumble_avant = 1.0;
-        assert!(
-            secousse_depuis_telemetrie(&rugueux, &r) > 0,
-            "rugosité → secousse"
-        );
-        // Gros impact vertical (atterrissage) → secousse forte.
-        let mut impact = lisse;
-        impact.accel_vertical = 40.0;
-        assert!(
-            secousse_depuis_telemetrie(&impact, &r) > secousse_depuis_telemetrie(&rugueux, &r),
-            "un atterrissage secoue plus qu'une route rugueuse"
-        );
-        // Hors course : aucune secousse.
-        let mut hors = impact;
-        hors.course_active = false;
-        assert_eq!(secousse_depuis_telemetrie(&hors, &r), 0);
+        // Route lisse (variation sous la zone morte) → aucune secousse.
+        assert_eq!(secousse_depuis_bosse(0.005, &r), 0, "lisse → 0");
+        // Bosse modérée → secousse partielle.
+        let modere = secousse_depuis_bosse(0.03, &r);
+        assert!(modere > 0, "une bosse secoue : {modere}");
+        // Atterrissage (forte compression) → secousse saturée, plus forte qu'une bosse.
+        let choc = secousse_depuis_bosse(0.20, &r);
+        assert!(choc > modere, "atterrissage > bosse : {choc} > {modere}");
+        // Le signe de la variation n'a pas d'importance (amplitude seule).
+        assert_eq!(secousse_depuis_bosse(-0.20, &r), choc);
     }
 
     #[test]
