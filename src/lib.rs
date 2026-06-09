@@ -24,4 +24,5 @@ pub mod range;
 pub mod report;
 pub mod souris;
 pub mod switcher;
+pub mod telemetrie;
 pub mod vjoy;

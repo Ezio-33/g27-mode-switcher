@@ -3,9 +3,10 @@
 use std::time::Duration;
 
 use eframe::egui::{self, RichText, Stroke};
-use g27_mode_switcher::config::{Config, ModeSouhaite};
+use g27_mode_switcher::config::{Config, ModeJeu, ModeSouhaite};
 use g27_mode_switcher::device::{Command, DeviceSession, Event, OpError, OpKind, OpReport, Status};
 
+use super::carte_forza::CarteForza;
 use super::carte_pont::CartePont;
 use super::log::{self, LineKind, LogBuffer};
 use super::theme;
@@ -41,6 +42,7 @@ pub struct App {
     about_open: bool,
     config: Config,
     carte_pont: CartePont,
+    carte_forza: CarteForza,
     /// Garde une seule restauration auto du mode par session (au premier statut connu).
     auto_restore_fait: bool,
 }
@@ -59,6 +61,7 @@ impl App {
             about_open: false,
             config,
             carte_pont: CartePont::new(),
+            carte_forza: CarteForza::new(),
             auto_restore_fait: false,
         }
     }
@@ -368,6 +371,47 @@ impl App {
         }
     }
 
+    /// Barre de menus supérieure : menu « Jeux » (choix du mode) + libellé du mode actif.
+    fn menu_jeux(&mut self, ui: &mut egui::Ui) {
+        egui::MenuBar::new().ui(ui, |ui| {
+            ui.menu_button(RichText::new("Jeux").color(theme::TEXT), |ui| {
+                self.choix_mode(ui, ModeJeu::General, "Général — pont vJoy (tous jeux)");
+                self.choix_mode(ui, ModeJeu::Forza, "Forza Horizon — télémétrie");
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(libelle_mode(self.config.mode_jeu))
+                        .small()
+                        .color(theme::GOLD_DARK),
+                );
+            });
+        });
+    }
+
+    /// Entrée de menu pour un mode de jeu ; bascule (et arrête l'autre pont) si choisi.
+    fn choix_mode(&mut self, ui: &mut egui::Ui, mode: ModeJeu, libelle: &str) {
+        if ui.radio(self.config.mode_jeu == mode, libelle).clicked() {
+            if self.config.mode_jeu != mode {
+                self.changer_mode(mode);
+            }
+            ui.close();
+        }
+    }
+
+    /// Change le mode de jeu : arrête le pont du mode quitté, mémorise et journalise.
+    fn changer_mode(&mut self, mode: ModeJeu) {
+        match self.config.mode_jeu {
+            ModeJeu::General => self.carte_pont.arreter(),
+            ModeJeu::Forza => self.carte_forza.arreter(),
+        }
+        self.config.mode_jeu = mode;
+        self.sauvegarder_config();
+        self.log.push(
+            LineKind::Info,
+            format!("Mode de jeu : {}.", libelle_mode(mode)),
+        );
+    }
+
     /// Fenêtre « À propos ».
     fn about_window(&mut self, ctx: &egui::Context) {
         if !self.about_open {
@@ -422,12 +466,25 @@ impl eframe::App for App {
         // Le `Drop` du champ `carte_pont` en serait un dernier filet, mais on le
         // fait ici explicitement et tôt.
         self.carte_pont.arreter();
+        self.carte_forza.arreter(); // remet le volant au neutre (mode Forza).
         // Puis on persiste la dernière géométrie de fenêtre et les réglages.
         self.persister_reglages();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll(ui.ctx());
+
+        // Barre de menus en haut : choix du mode de jeu (« Jeux »).
+        egui::Panel::top("menu_jeux")
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::BG_PANEL)
+                    .inner_margin(egui::Margin::symmetric(10, 4)),
+            )
+            .show_separator_line(true)
+            .show_inside(ui, |ui| {
+                self.menu_jeux(ui);
+            });
 
         // Pied de page ancré en bas (réservé avant le panneau central pour rester
         // toujours visible), fond panneau + bordure haute comme la maquette.
@@ -467,7 +524,14 @@ impl eframe::App for App {
                         ui.add_space(12.0);
                         self.card_autocentrage(ui);
                         ui.add_space(12.0);
-                        self.carte_pont.afficher(ui, &mut self.config, &self.log);
+                        match self.config.mode_jeu {
+                            ModeJeu::General => {
+                                self.carte_pont.afficher(ui, &mut self.config, &self.log);
+                            }
+                            ModeJeu::Forza => {
+                                self.carte_forza.afficher(ui, &mut self.config, &self.log);
+                            }
+                        }
                         ui.add_space(12.0);
                         // Le journal remplit la hauteur restante du panneau central.
                         self.card_journal(ui);
@@ -638,6 +702,14 @@ fn footer_link(ui: &mut egui::Ui, label: &str, url: &str) {
 /// Séparateur discret entre deux liens.
 fn footer_sep(ui: &mut egui::Ui) {
     ui.label(RichText::new("\u{b7}").small().color(theme::TEXT_DIM));
+}
+
+/// Libellé court du mode de jeu (menu + indicateur).
+fn libelle_mode(mode: ModeJeu) -> &'static str {
+    match mode {
+        ModeJeu::General => "Mode Général (vJoy)",
+        ModeJeu::Forza => "Mode Forza (télémétrie)",
+    }
 }
 
 /// Ligne de journal pour un changement de statut.

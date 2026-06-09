@@ -38,6 +38,12 @@ const ID_VJOY_MIN: u32 = 1;
 const ID_VJOY_MAX: u32 = 16;
 /// Identifiant de device vJoy par défaut.
 const ID_VJOY_DEFAUT: u32 = 1;
+/// Port UDP par défaut d'écoute de la télémétrie Forza « Data Out ».
+const FORZA_PORT_DEFAUT: u16 = 5300;
+/// Gain par défaut du retour de force Forza (%).
+const FORZA_GAIN_DEFAUT: u8 = 60;
+/// Gain maximal du retour de force Forza (%).
+const FORZA_GAIN_MAX: u8 = 100;
 
 /// Configuration complète de l'application.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -51,6 +57,64 @@ pub struct Config {
     pub journalisation: Journalisation,
     /// Réglages du pont vJoy.
     pub pont: Pont,
+    /// Mode de jeu actif (général vJoy ou Forza télémétrie).
+    pub mode_jeu: ModeJeu,
+    /// Réglages du mode Forza (télémétrie → retour de force).
+    pub forza: Forza,
+}
+
+/// Mode de jeu sélectionné dans le menu « Jeux » (préférence persistée).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModeJeu {
+    /// Mode général : pont vJoy + masquage (compatible tous jeux).
+    #[default]
+    General,
+    /// Mode Forza : G27 non masqué + retour de force synthétisé depuis la télémétrie.
+    Forza,
+}
+
+impl ModeJeu {
+    /// Représentation textuelle stable (clés `config get`/`set`, sérialisation).
+    #[must_use]
+    pub fn comme_str(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Forza => "forza",
+        }
+    }
+
+    /// Interprète une saisie textuelle (formes FR tolérées).
+    #[must_use]
+    pub fn depuis_str(valeur: &str) -> Option<Self> {
+        match valeur {
+            "general" | "général" | "vjoy" => Some(Self::General),
+            "forza" | "forza_horizon" => Some(Self::Forza),
+            _ => None,
+        }
+    }
+}
+
+/// Réglages du mode Forza (section `[forza]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Forza {
+    /// Port UDP d'écoute du flux « Data Out » (à régler identique dans le jeu).
+    pub port: u16,
+    /// Intensité globale du retour de force, en pourcentage (`0..=100`).
+    pub gain: u8,
+    /// Inverser le sens du couple (selon le ressenti matériel).
+    pub inverser: bool,
+}
+
+impl Default for Forza {
+    fn default() -> Self {
+        Self {
+            port: FORZA_PORT_DEFAUT,
+            gain: FORZA_GAIN_DEFAUT,
+            inverser: false,
+        }
+    }
 }
 
 /// Réglages liés au volant (section `[volant]`).
@@ -291,6 +355,8 @@ impl Config {
         self.pont.remap_boutons = crate::feeder::remap_vers_liste(
             &crate::feeder::remap_depuis_liste(&self.pont.remap_boutons),
         );
+        // Gain Forza : pourcentage borné (le port UDP accepte toute valeur u16).
+        self.forza.gain = self.forza.gain.min(FORZA_GAIN_MAX);
     }
 }
 

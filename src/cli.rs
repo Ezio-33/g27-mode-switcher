@@ -10,7 +10,9 @@ use tracing_subscriber::EnvFilter;
 
 use g27_mode_switcher::entree::{self, EntreesG27, LecteurG27};
 use g27_mode_switcher::keymapper::{self, Bouton, EtatBoutons};
-use g27_mode_switcher::{autocenter, config, ffb, hid, hidhide, pont, range, report, switcher};
+use g27_mode_switcher::{
+    autocenter, config, ffb, hid, hidhide, pont, range, report, switcher, telemetrie,
+};
 
 /// Bascule un volant Logitech G27 vers son mode natif, sans pilote propriétaire.
 #[derive(Debug, Parser)]
@@ -94,6 +96,12 @@ enum Command {
         /// Action à effectuer.
         #[command(subcommand)]
         action: FfbAction,
+    },
+    /// Mode Forza : G27 non masqué + retour de force depuis la télémétrie « Data Out ».
+    Forza {
+        /// Port UDP d'écoute. Défaut : `forza_port` de la config.
+        #[arg(long)]
+        port: Option<u16>,
     },
 }
 
@@ -237,6 +245,7 @@ fn dispatch(command: Command, config: config::Config, verbose: u8) -> ExitCode {
         Command::Levier => run_levier(),
         Command::Descripteur => run_descripteur(),
         Command::Feeder { id, sans_masquage } => run_feeder(id, sans_masquage),
+        Command::Forza { port } => run_forza(port),
         Command::Hidhide { action } => run_hidhide(action),
         Command::Pont { action } => run_pont(action),
         Command::Ffb { action } => run_ffb(action),
@@ -846,6 +855,46 @@ fn run_feeder(id: Option<u32>, sans_masquage: bool) -> ExitCode {
     drop(pont); // arrête le feeder (libère vJoy) PUIS démasque le G27 (ordre des champs).
     println!("Pont arrêté, G27 démasqué, device vJoy libéré.");
     // Débloque le handler console (cas CTRL_CLOSE, qui attend la fin du nettoyage).
+    NETTOYAGE_FINI.store(true, Ordering::SeqCst);
+    ExitCode::SUCCESS
+}
+
+/// Sous-commande `forza` : mode Forza (télémétrie → retour de force, G27 non masqué).
+///
+/// Écoute le flux UDP « Data Out » de Forza et écrit la force calculée au volant jusqu'à
+/// la fermeture de la console. Le `Drop` du pont remet le volant au neutre.
+fn run_forza(port: Option<u16>) -> ExitCode {
+    let config = config::Config::charger();
+    let port = port.unwrap_or(config.forza.port);
+    let reglages = telemetrie::ReglagesForza {
+        gain: config.forza.gain,
+        inverser: config.forza.inverser,
+    };
+    let actif = match telemetrie::PontTelemetrie::demarrer(port, reglages) {
+        Ok(actif) => actif,
+        Err(erreur) => {
+            eprintln!("Erreur : {erreur}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "Mode Forza actif — écoute de la télémétrie sur le port UDP {}.",
+        actif.port()
+    );
+    println!(
+        "Activez « Data Out » dans Forza (IP 127.0.0.1, port {}), puis lancez une course. \
+         Fermez cette console pour arrêter (le volant sera remis au neutre).",
+        actif.port()
+    );
+
+    installer_handler_arret();
+    while !ARRET_DEMANDE.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(150));
+    }
+
+    println!("Arrêt du mode Forza\u{2026}");
+    drop(actif); // remet le volant au neutre (garde RAII du worker).
+    println!("Mode Forza arrêté, volant remis au neutre.");
     NETTOYAGE_FINI.store(true, Ordering::SeqCst);
     ExitCode::SUCCESS
 }

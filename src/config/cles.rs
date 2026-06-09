@@ -7,7 +7,7 @@
 use super::{ANGLE_MAX, ANGLE_MIN, Config, ID_VJOY_MAX, ID_VJOY_MIN, VERBOSITES};
 
 /// Clés modifiables via `config set` / lisibles via `config get`.
-pub const CLES_MODIFIABLES: [&str; 12] = [
+pub const CLES_MODIFIABLES: [&str; 16] = [
     "angle_par_defaut",
     "appliquer_angle_au_switch",
     "desactiver_autocentrage_au_switch",
@@ -20,6 +20,10 @@ pub const CLES_MODIFIABLES: [&str; 12] = [
     "chapeau_vers_souris",
     "bouton_valider",
     "bouton_retour",
+    "mode_jeu",
+    "forza_port",
+    "forza_gain",
+    "forza_inverser",
 ];
 
 /// Erreur de lecture/écriture d'une clé de configuration.
@@ -27,7 +31,7 @@ pub const CLES_MODIFIABLES: [&str; 12] = [
 pub enum ErreurCle {
     /// La clé demandée n'existe pas.
     #[error(
-        "clé inconnue : « {0} ». Clés valides : angle_par_defaut, appliquer_angle_au_switch, desactiver_autocentrage_au_switch, mode_souhaite, verbosite, id_vjoy, masquer_g27_au_demarrage, couper_autocentrage_ffb, chapeau_vers_clavier, chapeau_vers_souris, bouton_valider, bouton_retour"
+        "clé inconnue : « {0} ». Clés valides : angle_par_defaut, appliquer_angle_au_switch, desactiver_autocentrage_au_switch, mode_souhaite, verbosite, id_vjoy, masquer_g27_au_demarrage, couper_autocentrage_ffb, chapeau_vers_clavier, chapeau_vers_souris, bouton_valider, bouton_retour, mode_jeu, forza_port, forza_gain, forza_inverser"
     )]
     Inconnue(String),
     /// La valeur fournie n'est pas valide pour cette clé.
@@ -62,6 +66,10 @@ impl Config {
             "chapeau_vers_souris" => Ok(self.pont.chapeau_vers_souris.to_string()),
             "bouton_valider" => Ok(self.pont.bouton_valider.to_string()),
             "bouton_retour" => Ok(self.pont.bouton_retour.to_string()),
+            "mode_jeu" => Ok(self.mode_jeu.comme_str().to_owned()),
+            "forza_port" => Ok(self.forza.port.to_string()),
+            "forza_gain" => Ok(self.forza.gain.to_string()),
+            "forza_inverser" => Ok(self.forza.inverser.to_string()),
             _ => Err(ErreurCle::Inconnue(cle.to_owned())),
         }
     }
@@ -123,6 +131,27 @@ impl Config {
             }
             "bouton_retour" => {
                 self.pont.bouton_retour = parse_bouton(cle, valeur)?;
+            }
+            "mode_jeu" => {
+                self.mode_jeu = super::ModeJeu::depuis_str(valeur)
+                    .ok_or_else(|| invalide(cle, "general ou forza"))?;
+            }
+            "forza_port" => {
+                self.forza.port = valeur
+                    .parse()
+                    .ok()
+                    .filter(|port| *port != 0)
+                    .ok_or_else(|| invalide(cle, "un port UDP entre 1 et 65535"))?;
+            }
+            "forza_gain" => {
+                self.forza.gain = valeur
+                    .parse()
+                    .ok()
+                    .filter(|gain| *gain <= 100)
+                    .ok_or_else(|| invalide(cle, "un pourcentage entre 0 et 100"))?;
+            }
+            "forza_inverser" => {
+                self.forza.inverser = parse_bool(cle, valeur)?;
             }
             _ => return Err(ErreurCle::Inconnue(cle.to_owned())),
         }

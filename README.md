@@ -41,6 +41,7 @@ Windows 11.
 - [Autocentrage](#autocentrage)
 - [Retour de force (FFB)](#retour-de-force-ffb)
 - [Pont vJoy (recopie d'entrée + masquage)](#pont-vjoy-recopie-dentrée--masquage)
+- [Mode Forza (télémétrie, sans aucun logiciel en plus)](#mode-forza-télémétrie-sans-aucun-logiciel-en-plus)
 - [Mapping natif du G27](#mapping-natif-du-g27)
 - [Dépannage](#dépannage)
 - [Annexe : accès HID sous Linux (règle udev)](#annexe--accès-hid-sous-linux-règle-udev)
@@ -334,6 +335,10 @@ masquer_g27_au_demarrage = true   # masquer le G27 réel au jeu quand le pont to
 | `largeur` / `hauteur` / `pos_x` / `pos_y` | nombres | 480×800 | Géométrie de la fenêtre (gérée par la GUI). |
 | `id_vjoy` | entier 1–16 | `1` | Device vJoy alimenté par le [pont](#pont-vjoy-recopie-dentrée--masquage). |
 | `masquer_g27_au_demarrage` | booléen | `true` | Masquer le G27 réel au jeu quand le pont tourne. |
+| `mode_jeu` | `general`/`forza` | `general` | Mode actif au démarrage de la GUI (menu « Jeux »). |
+| `forza_port` | port UDP 1–65535 | `5300` | Port d'écoute de la télémétrie [Forza](#mode-forza-télémétrie-sans-aucun-logiciel-en-plus). |
+| `forza_gain` | entier 0–100 | `60` | Intensité du retour de force en mode Forza (%). |
+| `forza_inverser` | booléen | `false` | Inverser le sens du couple en mode Forza. |
 
 ### Modifier la configuration en ligne de commande
 
@@ -529,6 +534,67 @@ cas d'erreur. Seul un **kill brutal** du process (Gestionnaire des tâches, coup
 de courant) peut laisser le G27 masqué. Dans ce cas rare, rouvrez l'outil et
 arrêtez/relancez le pont, ou utilisez le **HidHide Configuration Client** pour vider
 la liste de masquage.
+
+## Mode Forza (télémétrie, sans aucun logiciel en plus)
+
+> ✅ **Nouveau : un retour de force pour Forza Horizon sans vJoy, sans HidHide,
+> sans masquage — donc avec la navigation des menus *et de la map* 100 % native.**
+
+### Le problème que ça résout
+
+Forza Horizon ne lit **pas** les périphériques DirectInput (comme vJoy) pour sa
+navigation d'interface : son curseur de menu/map ne répond qu'au **clavier, à la
+souris ou à une manette XInput**. Tant que le G27 est **masqué** (mode général, pour
+capter le FFB via vJoy), on perd donc la navigation. À l'inverse, **non masqué**, le
+G27 est reconnu nativement (menus + map OK) mais le pilote générique de Windows ne
+lui fournit aucun FFB.
+
+Le **mode Forza** lève ce dilemme : on **ne masque pas** le G27 (navigation native
+conservée) et l'application **synthétise** le retour de force à partir de la
+**télémétrie « Data Out »** que Forza diffuse lui-même (fonction intégrée au jeu,
+**aucun logiciel à installer**). La force est calculée depuis la physique (angle de
+dérive des pneus, vitesse) et écrite au volant par commandes `lg4ff` brutes.
+
+| | Mode général (vJoy) | Mode Forza (télémétrie) |
+| --- | --- | --- |
+| Prérequis | vJoy + HidHide | **Aucun** (Data Out est dans le jeu) |
+| Navigation menus | Clavier (G27 masqué) | **Native** (G27 visible) |
+| Navigation map | Limitée | **Native** |
+| Retour de force | Effets FFB du jeu (tous jeux) | Synthétisé depuis la physique (Forza) |
+
+> ℹ️ Le retour de force du mode Forza est **calculé** (couple d'auto-alignement
+> déduit de la dérive des pneus), pas le signal FFB exact du jeu : c'est une très
+> bonne approximation, réglable via l'**intensité** et l'**inversion du sens**.
+
+### Procédure — associer la télémétrie au volant
+
+1. **Dans Forza Horizon** : `Réglages` > `HUD et Gameplay` > **« Data Out »** →
+   **Activé (On)**.
+2. **IP de sortie des données** : `127.0.0.1`.
+3. **Port de sortie des données** : un port libre (par défaut **5300**) — **le même**
+   que celui réglé dans l'outil.
+4. **Dans l'outil** : menu **« Jeux » > « Forza Horizon »**, vérifiez le **port
+   d'écoute**, puis **« Démarrer le mode Forza »**.
+5. **Lancez une course** : le panneau affiche « Réception OK — course active » et la
+   dérive en direct ; le volant reçoit alors le retour de force.
+
+Réglez l'**intensité** à votre goût ; si le volant *fuit* au lieu de résister en
+virage, cochez **« Inverser le sens du couple »**. Gardez l'**autocentrage matériel**
+actif (carte *Autocentrage*) pour la résistance à l'arrêt.
+
+### Ligne de commande
+
+```bash
+# Démarre le mode Forza (G27 non masqué). Pour arrêter : FERMEZ la console.
+g27-mode-switcher forza
+
+# Forcer un port d'écoute (sinon : forza_port de la config)
+g27-mode-switcher forza --port 5300
+```
+
+Le port, le gain et l'inversion par défaut viennent de la section `[forza]` de la
+[configuration](#configuration) (`forza_port`, `forza_gain`, `forza_inverser`). Le
+mode actif au démarrage de la GUI est mémorisé (`mode_jeu`).
 
 ## Mapping natif du G27
 

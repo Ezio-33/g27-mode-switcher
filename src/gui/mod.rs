@@ -1,6 +1,7 @@
 //! Interface graphique eframe/egui du G27 Mode Switcher.
 
 mod app;
+mod carte_forza;
 mod carte_pont;
 mod log;
 mod remap;
