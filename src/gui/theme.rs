@@ -157,5 +157,11 @@ fn install_style(ctx: &egui::Context) {
 
     style.spacing.item_spacing = egui::vec2(10.0, 10.0);
     style.spacing.button_padding = egui::vec2(14.0, 9.0);
-    ctx.set_global_style(style);
+
+    // ⚠️ egui 0.34 conserve un style **par thème** (`dark_style` / `light_style`) et le
+    // re-dérive à chaque frame selon le thème système. `set_global_style` ne touche que le
+    // thème actif au moment de l'install : nos tailles de `text_styles` (corps, small,
+    // bouton, titre) retombaient alors aux défauts d'egui (seuls les `.size()` explicites
+    // tenaient). On applique donc le style aux **deux** thèmes pour qu'il soit toujours actif.
+    ctx.all_styles_mut(|theme_style| *theme_style = style.clone());
 }
