@@ -1,9 +1,11 @@
 //! Modèle de force : convertit la télémétrie Forza en couple pour le volant.
 //!
-//! Le modèle combine quatre effets, tous tirés de la télémétrie et modulés par le **gain** :
+//! Le modèle combine cinq effets, tous tirés de la télémétrie et modulés par le **gain** :
 //! - **force de virage** (couple d'auto-alignement ∝ dérive des pneus avant, courbe
 //!   progressive) — la résistance ressentie en tournant ;
 //! - **poids** (autocentrage matériel) **lourd à l'arrêt** s'allégeant avec la vitesse ;
+//! - **transfert de charge** : la force suit la **part de poids sur l'avant** (déduite des
+//!   suspensions avant/arrière) — plus lourd au freinage/appui, plus léger à l'accélération ;
 //! - **secousses** (oscillation) de **rugosité de surface** + **impacts verticaux**
 //!   (bosses, atterrissages) — le « grain » de la route et les chocs ;
 //! - **allègement en l'air** : quand le train avant décolle (saut), le volant s'allège.
@@ -56,6 +58,13 @@ const SUSPENSION_SOL_MIN: f32 = 0.12;
 /// volant s'allège sans devenir totalement libre.
 const PLANCHER_AERIEN: f32 = 0.5;
 
+/// Sensibilité du **transfert de charge** avant/arrière sur le poids de direction.
+const GAIN_TRANSFERT: f32 = 1.5;
+/// Multiplicateur de charge **minimal** (train avant fortement délesté → accélération).
+const TRANSFERT_MIN: f32 = 0.70;
+/// Multiplicateur de charge **maximal** (train avant fortement chargé → freinage/appui).
+const TRANSFERT_MAX: f32 = 1.40;
+
 /// Réglages du retour de force Forza, ajustables à chaud.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReglagesForza {
@@ -89,8 +98,9 @@ pub fn couple_depuis_telemetrie(t: &Telemetrie, reglages: &ReglagesForza) -> i32
     // dérive — évite un couple « trop prononcé » dès le moindre virage.
     let progressif = derive * derive.abs();
     let facteur_vitesse = (t.vitesse_m_s / VITESSE_PLEINE_M_S).clamp(0.0, 1.0);
-    // En l'air (train avant délesté), la force de virage s'efface : plus de grip → volant léger.
-    let mut couple = -progressif * facteur_vitesse * gain * facteur_sol(t);
+    // En l'air → léger ; et la force dépend de la **charge** sur l'avant (transfert de poids)
+    // → freinage/appui = plus lourd, accélération = plus léger (réalisme de la répartition).
+    let mut couple = -progressif * facteur_vitesse * gain * facteur_sol(t) * facteur_charge(t);
     if reglages.inverser {
         couple = -couple;
     }
@@ -120,8 +130,12 @@ pub fn autocentre_depuis_vitesse(t: &Telemetrie, reglages: &ReglagesForza) -> u1
     // descente douce jusqu'au plateau léger — bien plus progressif qu'une rampe linéaire.
     let poids = (facteur * core::f32::consts::FRAC_PI_2).cos();
     let gain = f32::from(reglages.gain) / 100.0;
-    // Allègement quand le train avant décolle (saut) : le volant change de dureté en l'air.
-    let magnitude = (POIDS_ROULANT + poids * (POIDS_ARRET - POIDS_ROULANT)) * gain * facteur_sol(t);
+    // Allègement en l'air + modulation par le **transfert de charge** sur l'avant : le poids
+    // de direction suit le report de masse (plus lourd à l'appui, plus léger à l'accélération).
+    let magnitude = (POIDS_ROULANT + poids * (POIDS_ARRET - POIDS_ROULANT))
+        * gain
+        * facteur_sol(t)
+        * facteur_charge(t);
     borne_u16(magnitude)
 }
 
@@ -131,6 +145,23 @@ pub fn autocentre_depuis_vitesse(t: &Telemetrie, reglages: &ReglagesForza) -> u1
 fn facteur_sol(t: &Telemetrie) -> f32 {
     let au_sol = (t.suspension_avant / SUSPENSION_SOL_MIN).clamp(0.0, 1.0);
     PLANCHER_AERIEN + (1.0 - PLANCHER_AERIEN) * au_sol
+}
+
+/// Multiplicateur de **transfert de charge** : part de poids sur le **train avant**, déduite
+/// des débattements de suspension avant vs arrière (plus c'est comprimé, plus c'est chargé).
+/// `> 1` quand l'avant est chargé (freinage, appui, voiture avant-lourde) → direction **plus
+/// lourde** ; `< 1` quand il est délesté (accélération) → **plus légère**. Rend la force
+/// dépendante de la **charge réelle** (et plus du seul angle de dérive) → on « sent » la
+/// répartition du poids. `1.0` (neutre) si les roues sont en l'air (pas de charge mesurable).
+fn facteur_charge(t: &Telemetrie) -> f32 {
+    let avant = t.suspension_avant.max(0.0);
+    let arriere = t.suspension_arriere.max(0.0);
+    let total = avant + arriere;
+    if total < 1e-3 {
+        return 1.0;
+    }
+    let fraction_avant = avant / total; // 0.5 = parfaitement équilibré
+    (1.0 + GAIN_TRANSFERT * (fraction_avant - 0.5)).clamp(TRANSFERT_MIN, TRANSFERT_MAX)
 }
 
 /// Amplitude (`0`..[`COUPLE_MAX`]) de la **secousse de route** pour une variation de
@@ -172,6 +203,7 @@ mod tests {
             rumble_avant: 0.0,
             accel_vertical: 0.0,
             suspension_avant: 1.0, // au sol (pas d'allègement aérien) par défaut.
+            suspension_arriere: 1.0, // équilibré → transfert de charge neutre par défaut.
         }
     }
 
@@ -262,6 +294,30 @@ mod tests {
             couple_depuis_telemetrie(&en_l_air, &r).abs()
                 < couple_depuis_telemetrie(&au_sol, &r).abs(),
             "force de virage réduite en l'air"
+        );
+    }
+
+    #[test]
+    fn transfert_de_charge_durcit_quand_l_avant_est_charge() {
+        let r = ReglagesForza {
+            gain: 100,
+            inverser: false,
+        };
+        // Avant écrasé (freinage/appui) vs avant délesté (accélération), même dérive/vitesse.
+        let mut charge = telem(true, 20.0, 0.15);
+        charge.suspension_avant = 0.8;
+        charge.suspension_arriere = 0.3;
+        let mut deleste = telem(true, 20.0, 0.15);
+        deleste.suspension_avant = 0.3;
+        deleste.suspension_arriere = 0.8;
+        assert!(
+            couple_depuis_telemetrie(&charge, &r).abs()
+                > couple_depuis_telemetrie(&deleste, &r).abs(),
+            "force de virage plus forte quand l'avant est chargé"
+        );
+        assert!(
+            autocentre_depuis_vitesse(&charge, &r) > autocentre_depuis_vitesse(&deleste, &r),
+            "poids de direction plus lourd quand l'avant est chargé"
         );
     }
 

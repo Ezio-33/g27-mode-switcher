@@ -32,6 +32,7 @@ const OFF_COURSE_ACTIVE: usize = 0; // IsRaceOn : u32 (0 = hors gameplay)
 const OFF_ACCEL_Y: usize = 24; // AccelerationY : f32 (vertical : bosses/sauts/atterrissages)
 const OFF_VITESSE_X: usize = 32; // VelocityX : f32 (Y, Z suivent à +4, +8)
 const OFF_SUSPENSION_AVANT_G: usize = 68; // NormalizedSuspensionTravelFrontLeft : f32 (FR à +4)
+const OFF_SUSPENSION_ARRIERE_G: usize = 76; // NormalizedSuspensionTravelRearLeft : f32 (RR à +4)
 const OFF_RUMBLE_AVANT_G: usize = 148; // SurfaceRumbleFrontLeft : f32 (FR à +4)
 const OFF_DERIVE_AVANT_G: usize = 164; // TireSlipAngleFrontLeft : f32 (FR à +4)
 
@@ -51,9 +52,14 @@ pub struct Telemetrie {
     /// (pic d'accélération à l'impact) → secousses du volant.
     pub accel_vertical: f32,
     /// Débattement de suspension avant **normalisé** (moyenne, `0` = détente max/roues en
-    /// l'air, `1` = compression max) : sert à **alléger** le volant quand le train avant
-    /// décolle (sauts).
+    /// l'air, `1` = compression max = chargé) : sert à **alléger** le volant quand le train
+    /// avant décolle (sauts) et, avec [`suspension_arriere`](Telemetrie::suspension_arriere),
+    /// à déduire le **transfert de charge** avant/arrière.
     pub suspension_avant: f32,
+    /// Débattement de suspension arrière **normalisé** (moyenne) : comparé à l'avant, il
+    /// donne la **répartition de charge** (freinage → avant chargé → direction plus lourde ;
+    /// accélération → avant délesté → plus légère).
+    pub suspension_arriere: f32,
 }
 
 /// Décode un paquet « Data Out » en [`Telemetrie`]. Renvoie `None` si le paquet est trop
@@ -72,6 +78,8 @@ pub fn analyser(paquet: &[u8]) -> Option<Telemetrie> {
     let rumble_d = lire_f32(paquet, OFF_RUMBLE_AVANT_G + 4)?;
     let susp_g = lire_f32(paquet, OFF_SUSPENSION_AVANT_G)?;
     let susp_d = lire_f32(paquet, OFF_SUSPENSION_AVANT_G + 4)?;
+    let susp_arr_g = lire_f32(paquet, OFF_SUSPENSION_ARRIERE_G)?;
+    let susp_arr_d = lire_f32(paquet, OFF_SUSPENSION_ARRIERE_G + 4)?;
     Some(Telemetrie {
         course_active: lire_u32(paquet, OFF_COURSE_ACTIVE)? != 0,
         vitesse_m_s: (vx * vx + vy * vy + vz * vz).sqrt(),
@@ -79,6 +87,7 @@ pub fn analyser(paquet: &[u8]) -> Option<Telemetrie> {
         rumble_avant: f32::midpoint(rumble_g, rumble_d),
         accel_vertical: lire_f32(paquet, OFF_ACCEL_Y)?,
         suspension_avant: f32::midpoint(susp_g, susp_d),
+        suspension_arriere: f32::midpoint(susp_arr_g, susp_arr_d),
     })
 }
 
