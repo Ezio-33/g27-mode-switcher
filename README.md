@@ -8,7 +8,7 @@ Bascule un volant **Logitech G27** de son mode dégradé par défaut vers son
 propriétaire** — donc **compatible avec HVCI / Memory Integrity** activé sur
 Windows 11.
 
-> **État : `v1.1.1` — application adaptative « LGS-like » complète, toujours sans pilote.**
+> **État : `v1.2.0` — application adaptative « LGS-like » complète, toujours sans pilote.**
 > Au-delà de la bascule en mode natif (axes, angle, autocentrage), l'application offre
 > **deux modes de jeu** sélectionnables dans un menu **« Jeux »** :
 >
@@ -24,8 +24,9 @@ Windows 11.
 >   reconnu nativement par le jeu (**navigation menus *et* carte intactes**) et le retour de
 >   force est **calculé à partir de la télémétrie « Data Out »** que Forza diffuse lui-même
 >   — **aucun logiciel en plus**. Volant **lourd à l'arrêt** qui **s'allège** avec la vitesse,
->   force de virage déduite de la dérive des pneus, **vibrations** de la route et **secousses**
->   aux sauts/atterrissages.
+>   force de virage déduite de la dérive des pneus **et du transfert de charge** (plus lourd
+>   au freinage / en appui, plus léger à l'accélération — on « sent » la répartition du poids),
+>   **vibrations** de la route et **secousses** aux sauts/atterrissages.
 >
 > S'y ajoutent une **interface graphique** (accessible : police lisible, contenu défilable),
 > le **mapping complet des boutons** (façade, **boîte en H** + marche arrière) avec une
