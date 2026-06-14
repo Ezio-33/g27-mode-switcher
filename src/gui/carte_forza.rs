@@ -28,6 +28,13 @@ impl CarteForza {
         Self { pont: None }
     }
 
+    /// Vrai si le mode Forza est actif (il pilote alors l'autocentrage du G27). Sert à la
+    /// session pour suspendre son rafraîchissement d'autocentrage pendant ce temps.
+    #[must_use]
+    pub fn est_actif(&self) -> bool {
+        self.pont.is_some()
+    }
+
     /// Arrête le mode Forza (le `Drop` du pont remet le volant au neutre). Appelé à la
     /// fermeture et lors d'un changement de mode de jeu.
     pub fn arreter(&mut self) {

@@ -2,12 +2,15 @@
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::{autocenter, hid, range, switcher};
 
 /// Intervalle de scrutation de l'état du G27 (présence/mode) par le worker.
 const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(700);
+/// Cadence de réémission de l'autocentrage matériel (watchdog firmware) en mode natif,
+/// hors pont FFB : assez court pour que le ressort ne relâche jamais (volant qui mollit).
+const AUTOCENTER_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 
 /// État de présence et de mode du G27, détecté en continu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +42,12 @@ pub enum Command {
         /// `true` = réactiver (non implémenté en v0.3.0), `false` = désactiver.
         enable: bool,
     },
+    /// Indique qu'un **pont FFB** (vJoy ou Forza) gère désormais l'autocentrage (`true`) ou
+    /// l'a relâché (`false`). Quand un pont est actif, la session **suspend** son
+    /// rafraîchissement périodique de l'autocentrage pour ne pas se battre avec la
+    /// modulation du pont ; quand il s'arrête, elle le **reprend** (sinon le ressort
+    /// relâche faute de réémission — volant qui redevient mou).
+    PontFfbActif(bool),
     /// Arrêter proprement le worker.
     Shutdown,
 }
@@ -179,24 +188,49 @@ fn worker_loop(cmd_rx: &Receiver<Command>, evt_tx: &Sender<Event>) {
     };
 
     let mut last_status: Option<Status> = None;
+    // Autocentrage matériel **voulu** (carte/switch) ; rafraîchi périodiquement en natif.
+    let mut autocenter_actif = true;
+    // Un pont FFB (vJoy/Forza) gère l'autocentrage → on suspend notre rafraîchissement.
+    let mut pont_ffb_actif = false;
+    // Prochain diagnostic du mode (re-énumération HID, cadence lente).
+    let mut prochain_statut = Instant::now();
     loop {
-        let status = detect_status(&mut api);
-        if last_status != Some(status) {
-            last_status = Some(status);
-            if evt_tx.send(Event::Status(status)).is_err() {
-                return; // frontal disparu
+        // Diagnostic présence/mode à cadence lente uniquement (la re-énumération est coûteuse).
+        if Instant::now() >= prochain_statut {
+            prochain_statut = Instant::now() + STATUS_POLL_INTERVAL;
+            let status = detect_status(&mut api);
+            if last_status != Some(status) {
+                last_status = Some(status);
+                if evt_tx.send(Event::Status(status)).is_err() {
+                    return; // frontal disparu
+                }
             }
         }
 
-        match cmd_rx.recv_timeout(STATUS_POLL_INTERVAL) {
+        // Attente courte = cadence du rafraîchissement d'autocentrage.
+        match cmd_rx.recv_timeout(AUTOCENTER_REFRESH_INTERVAL) {
             Ok(Command::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
+            Ok(Command::PontFfbActif(actif)) => pont_ffb_actif = actif,
             Ok(command) => {
+                // Mémorise l'autocentrage voulu (pour le rafraîchissement « watchdog »).
+                match command {
+                    Command::SetAutocenter { enable } => autocenter_actif = enable,
+                    Command::Switch {
+                        disable_autocenter, ..
+                    } => autocenter_actif = !disable_autocenter,
+                    _ => {}
+                }
                 handle_command(&mut api, evt_tx, command);
-                // Une opération peut changer le mode (bascule) : on force un
-                // nouveau diagnostic immédiat au prochain tour de boucle.
-                last_status = None;
+                // Une opération peut changer le mode (bascule) : diagnostic immédiat.
+                prochain_statut = Instant::now();
             }
-            Err(RecvTimeoutError::Timeout) => {}
+            // Réémission périodique de l'autocentrage (watchdog) : en natif, voulu actif, et
+            // si aucun pont FFB ne le gère déjà. Maintient le ressort entre/après les ponts.
+            Err(RecvTimeoutError::Timeout) => {
+                if last_status == Some(Status::Native) && autocenter_actif && !pont_ffb_actif {
+                    autocenter::refresh_autocenter(&api);
+                }
+            }
         }
     }
 }
@@ -252,7 +286,8 @@ fn handle_command(api: &mut hidapi::HidApi, evt_tx: &Sender<Event>, command: Com
                 .map(|_| ())
                 .map_err(|error| OpError::from_autocenter(&error)),
         },
-        Command::Shutdown => return,
+        // Gérés directement dans la boucle (pas d'opération HID ni d'événement).
+        Command::Shutdown | Command::PontFfbActif(_) => return,
     };
     let _ = evt_tx.send(Event::Op(report));
 }

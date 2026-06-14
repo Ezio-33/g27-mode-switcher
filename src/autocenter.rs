@@ -163,6 +163,17 @@ pub fn enable_autocenter_with_api(api: &hidapi::HidApi) -> Result<AutocenterOutc
     Ok(AutocenterOutcome { device: info })
 }
 
+/// **Rafraîchit** l'autocentrage matériel (réémet la commande d'activation pleine force)
+/// sur le G27 natif, **silencieusement** (aucun log) — destiné à être appelé périodiquement
+/// par la session pour contrer le watchdog FFB du firmware (qui relâche le ressort sans
+/// réémission régulière). Toute erreur est ignorée (best-effort, jamais bloquant).
+pub fn refresh_autocenter(api: &hidapi::HidApi) {
+    if let Ok(info) = find_native_g27(api) {
+        let reports = enable_autocenter_reports();
+        let _ = report::send_reports(api, &info, &reports, ENABLE_COMMAND_DELAY);
+    }
+}
+
 /// Recherche un G27 en mode natif dans l'énumération HID.
 fn find_native_g27(api: &hidapi::HidApi) -> Result<hid::DeviceInfo, Error> {
     hid::find_native_g27(api).map_err(|reason| match reason {

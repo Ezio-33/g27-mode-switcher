@@ -49,6 +49,8 @@ pub struct App {
     carte_forza: CarteForza,
     /// Garde une seule restauration auto du mode par session (au premier statut connu).
     auto_restore_fait: bool,
+    /// Dernier état « un pont FFB gère l'autocentrage » signalé à la session (anti-spam).
+    pont_ffb_actif: bool,
 }
 
 impl App {
@@ -68,6 +70,18 @@ impl App {
             carte_pont: CartePont::new(),
             carte_forza: CarteForza::new(),
             auto_restore_fait: false,
+            pont_ffb_actif: false,
+        }
+    }
+
+    /// Signale à la session si un **pont FFB** (vJoy ou Forza) gère l'autocentrage, pour
+    /// qu'elle suspende/reprenne son rafraîchissement périodique. Envoyé seulement sur
+    /// changement d'état (la session est sinon inutilement sollicitée).
+    fn synchroniser_pont_ffb(&mut self) {
+        let actif = self.carte_pont.pont_alimente() || self.carte_forza.est_actif();
+        if actif != self.pont_ffb_actif {
+            self.pont_ffb_actif = actif;
+            self.session.send(Command::PontFfbActif(actif));
         }
     }
 
@@ -634,6 +648,10 @@ impl eframe::App for App {
                     });
                 indicateurs_defilement(ui, &sortie);
             });
+
+        // Tient la session au courant : un pont FFB gère-t-il l'autocentrage ? (sinon la
+        // session le rafraîchit elle-même pour ne pas le laisser relâcher).
+        self.synchroniser_pont_ffb();
 
         self.about_window(ui.ctx());
         self.conditions_window(ui.ctx());

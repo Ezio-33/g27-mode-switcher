@@ -52,6 +52,14 @@ impl CartePont {
         }
     }
 
+    /// Vrai si le pont vJoy **alimente** actuellement le device (donc gère le FFB et
+    /// l'autocentrage du G27). Sert à la session pour suspendre son rafraîchissement
+    /// d'autocentrage tant que le pont est aux commandes.
+    #[must_use]
+    pub fn pont_alimente(&self) -> bool {
+        self.pont.as_ref().is_some_and(Pont::actif)
+    }
+
     /// Libère le pont s'il existe (le `Drop` démasque le G27 et relâche vJoy) et
     /// abandonne tout démarrage en cours. Appelé à la fermeture (`on_exit`).
     pub fn arreter(&mut self) {
